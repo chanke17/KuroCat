@@ -6,6 +6,7 @@ enum CatHitZone {
     case none
     case head
     case body
+    case keyboard   // draggable, but hovering it is not petting
     case permissionPill
 }
 
@@ -62,16 +63,17 @@ enum CatRenderer {
             return .head
         }
 
-        // Torso + keyboard area hit check
+        // Mini keyboard & mouse area (allows dragging by grabbing keyboard too).
+        // Checked before the torso because the torso ellipse overlaps the keyboard's top edge.
+        let kbRect = CGRect(x: 58, y: 232, width: 236, height: 64)
+        if kbRect.contains(p) {
+            return .keyboard
+        }
+
+        // Torso hit check
         let bdx = (p.x - cx) / 58.0
         let bdy = (p.y - 196.0) / 56.0
         if bdx * bdx + bdy * bdy <= 1.0 {
-            return .body
-        }
-
-        // Mini keyboard & mouse area (allows dragging by grabbing keyboard too)
-        let kbRect = CGRect(x: 58, y: 232, width: 236, height: 64)
-        if kbRect.contains(p) {
             return .body
         }
 

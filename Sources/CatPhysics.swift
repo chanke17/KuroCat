@@ -244,6 +244,22 @@ final class CatPhysics {
     private(set) var totalPetSessions: Int = UserDefaults.standard.integer(forKey: "KuroCat.PetCount")
     private var petStrokeAccumulator: CGFloat = 0
     private var lastPetTime: CFTimeInterval = 0
+    private var lastStrokeTime: CFTimeInterval = 0
+    private var petStrokeStartTime: CFTimeInterval = 0
+    /// The cat only starts reacting after this long of petting...
+    static let petEngageDuration: CFTimeInterval = 1.0
+    /// ...with at least this much cursor travel (canvas points; the head is ~96 wide),
+    /// so a cursor that merely drifts onto the head doesn't count.
+    static let petEngageDistance: CGFloat = 60
+    /// Pauses up to this long (changing direction, lifting a finger off the trackpad)
+    /// keep the petting progress; a longer pause starts over.
+    static let petStrokeGap: CFTimeInterval = 0.6
+    private var fastMoveStartTime: CFTimeInterval = 0
+    private var lastFastMoveTime: CFTimeInterval = 0
+    /// Seconds of continuous fast mouse movement before the pupils start turning round.
+    static let huntArmDuration: CFTimeInterval = 0.8
+    /// Slowdowns shorter than this (e.g. reversing direction while waving) keep the timer going.
+    static let huntGap: CFTimeInterval = 0.25
     private var isCurrentlyPetting = false
     private var petCursorCanvasPos: CGPoint = .zero
     private var petSparkleCooldown: CGFloat = 0
@@ -345,6 +361,23 @@ final class CatPhysics {
     func registerPetStroke(canvasPoint: CGPoint, delta: CGFloat, isHead: Bool, at timestamp: CFTimeInterval? = nil) {
         guard CatSettings.shared.petInteraction else { return }
         let now = timestamp ?? CACurrentMediaTime()
+
+        // Petting must be deliberate: a cursor just passing over the cat shouldn't count.
+        // A pause longer than the stroke gap starts a new stroke.
+        if now - lastStrokeTime > CatPhysics.petStrokeGap {
+            petStrokeStartTime = now
+            if !isCurrentlyPetting { petStrokeAccumulator = 0 }
+        }
+        lastStrokeTime = now
+        petStrokeAccumulator += delta
+        if !isCurrentlyPetting {
+            guard now - petStrokeStartTime >= CatPhysics.petEngageDuration,
+                  petStrokeAccumulator >= CatPhysics.petEngageDistance else { return }
+            isCurrentlyPetting = true
+            totalPetSessions += 1
+            UserDefaults.standard.set(totalPetSessions, forKey: "KuroCat.PetCount")
+        }
+
         lastPetTime = now
         petCursorCanvasPos = canvasPoint
         sleepiness = 0
@@ -355,13 +388,6 @@ final class CatPhysics {
             petBodyIntensity = max(petBodyIntensity, petHeadIntensity * 0.6)
         } else {
             petBodyIntensity = min(1.0, petBodyIntensity + energy + 0.07)
-        }
-
-        petStrokeAccumulator += delta
-        if !isCurrentlyPetting && petStrokeAccumulator > 45 {
-            isCurrentlyPetting = true
-            totalPetSessions += 1
-            UserDefaults.standard.set(totalPetSessions, forKey: "KuroCat.PetCount")
         }
 
         // Gentle nuzzle toward cursor
@@ -425,8 +451,9 @@ final class CatPhysics {
             petHeadIntensity = max(0, petHeadIntensity - dt * 1.4)
             petBodyIntensity = max(0, petBodyIntensity - dt * 1.2)
             if petHeadIntensity < 0.05 && petBodyIntensity < 0.05 {
+                // Progress toward the next petting session is reset in registerPetStroke
+                // (after a pause), not here: this runs every frame before petting engages.
                 isCurrentlyPetting = false
-                petStrokeAccumulator = 0
             }
         } else if (petHeadIntensity > 0.55 || petBodyIntensity > 0.55) {
             petSparkleCooldown -= dt
@@ -465,7 +492,14 @@ final class CatPhysics {
 
         // 2b. Fast Mouse Movement -> Hunting / Stalking Mode (dilated round boba pupils + low crouch!)
         let mouseSpeed = hypot(curMouseVel.dx, curMouseVel.dy)
-        if mouseSpeed > 460 && petHeadIntensity < 0.25 && petBodyIntensity < 0.25 {
+        let isFastMove = mouseSpeed > 460 && petHeadIntensity < 0.25 && petBodyIntensity < 0.25
+        // Ordinary cursor moves across the screen easily exceed 460 pt/s, so only sustained
+        // fast waving counts: brief slowdowns (direction reversals) don't reset the timer.
+        if isFastMove {
+            if now - lastFastMoveTime > CatPhysics.huntGap { fastMoveStartTime = now }
+            lastFastMoveTime = now
+        }
+        if isFastMove && now - fastMoveStartTime >= CatPhysics.huntArmDuration {
             // Build up smoothly & responsively with fast mouse waving (laser-pointer effect!)
             let boost = min(1.0, (mouseSpeed - 460) / 1100.0)
             huntIntensity.target = min(1.0, huntIntensity.target + (0.45 + boost * 1.15) * dt)

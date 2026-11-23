@@ -67,7 +67,8 @@ final class CatCanvasView: NSView {
         if zone == .head || zone == .body {
             if let prev = lastHoverCanvasPt {
                 let delta = hypot(pt.x - prev.x, pt.y - prev.y)
-                if delta > 1.2 && delta < 80 {
+                // Low minimum so slow, gentle strokes still count.
+                if delta > 0.5 && delta < 80 {
                     physics.registerPetStroke(canvasPoint: pt, delta: delta, isHead: zone == .head)
                 }
             }
@@ -87,7 +88,7 @@ final class CatCanvasView: NSView {
             if win.ignoresMouseEvents == shouldCapture {
                 win.ignoresMouseEvents = !shouldCapture
             }
-            if zone == .head || zone == .body {
+            if zone == .head || zone == .body || zone == .keyboard {
                 if !isShowingOpenHand {
                     NSCursor.openHand.set()
                     isShowingOpenHand = true

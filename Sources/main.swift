@@ -160,8 +160,11 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             p.headYaw.value = -0.25
             p.headTilt.value = -0.08
             p.earFold.value = 0.65
-            for _ in 0..<10 {
-                p.registerPetStroke(canvasPoint: CGPoint(x: 184, y: 120), delta: 16, isHead: true)
+            // Simulate 1.5s of stroking so the deliberate-petting delay is passed.
+            let strokeStart = CACurrentMediaTime() - 1.5
+            for i in 0...30 {
+                p.registerPetStroke(canvasPoint: CGPoint(x: 184, y: 120), delta: 16, isHead: true,
+                                    at: strokeStart + Double(i) * 0.05)
             }
             p.triggerKeyDown(.s)
             p.floatingKeycaps[0].age = 0.22
