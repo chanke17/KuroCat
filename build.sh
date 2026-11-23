@@ -87,10 +87,12 @@ fi
 
 SWIFT_SOURCES=(
     "$ROOT/Sources/KeyMap.swift"
+    "$ROOT/Sources/CatAppearance.swift"
     "$ROOT/Sources/HardwareMonitor.swift"
     "$ROOT/Sources/InputEngine.swift"
     "$ROOT/Sources/CatPhysics.swift"
     "$ROOT/Sources/CatRenderer.swift"
+    "$ROOT/Sources/CatEditorWindow.swift"
     "$ROOT/Sources/OverlayWindow.swift"
     "$ROOT/Sources/AppDelegate.swift"
     "$ROOT/Sources/main.swift"

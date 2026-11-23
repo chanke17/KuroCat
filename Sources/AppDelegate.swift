@@ -194,16 +194,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scaleParent.submenu = scaleMenu
         menu.addItem(scaleParent)
 
-        // Cat Coat Skin submenu (经典小黑猫 / 挖煤暹罗猫)
+        // Cat Breed Presets + Custom Cat Studio Editor submenu
         let coatMenu = NSMenu()
-        for coat in CatCoatTheme.allCases {
-            let item = NSMenuItem(title: coat.rawValue, action: #selector(selectCoatTheme(_:)), keyEquivalent: "")
+        let customEditorItem = NSMenuItem(title: "🎨 打开自定义猫咪编辑器 (毛发/花纹/取色器)...", action: #selector(openCatEditor), keyEquivalent: "")
+        customEditorItem.target = self
+        coatMenu.addItem(customEditorItem)
+        coatMenu.addItem(.separator())
+
+        for preset in CatBreedPreset.allCases {
+            let item = NSMenuItem(title: preset.rawValue, action: #selector(selectBreedPreset(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = coat.rawValue
-            item.state = settings.coatTheme == coat ? .on : .off
+            item.representedObject = preset.rawValue
+            item.state = (settings.appearance.presetID == preset.rawValue) ? .on : .off
             coatMenu.addItem(item)
         }
-        let coatParent = NSMenuItem(title: "猫咪皮肤 🐱", action: nil, keyEquivalent: "")
+        let coatParent = NSMenuItem(title: "猫咪品种与外观 🐱", action: nil, keyEquivalent: "")
         coatParent.submenu = coatMenu
         menu.addItem(coatParent)
 
@@ -435,17 +440,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlayWindow.applyScale(CGFloat(num.doubleValue))
     }
 
-    @objc private func selectCoatTheme(_ sender: NSMenuItem) {
+    @objc private func openCatEditor() {
+        CatEditorWindowController.shared.showEditor()
+    }
+
+    @objc private func selectBreedPreset(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
-              let coat = CatCoatTheme(rawValue: raw) else { return }
-        CatSettings.shared.coatTheme = coat
-        // Auto-pair signature eye color (still freely overridable via 瞳色切换!)
-        switch coat {
-        case .classicBlack:
-            CatSettings.shared.eyeTheme = .neonChartreuse
-        case .siamese:
-            CatSettings.shared.eyeTheme = .siameseBlue
-        }
+              let preset = CatBreedPreset(rawValue: raw) else { return }
+        CatSettings.shared.appearance = preset.appearance
+        CatEditorWindowController.shared.syncUIFromSettings()
     }
 
     @objc private func selectKeyboardTheme(_ sender: NSMenuItem) {
@@ -458,6 +461,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let theme = EyeColorTheme(rawValue: raw) else { return }
         CatSettings.shared.eyeTheme = theme
+        var app = CatSettings.shared.appearance
+        app.eyeColor = RGBAColor(theme.primaryColor)
+        CatSettings.shared.appearance = app
+        CatEditorWindowController.shared.syncUIFromSettings()
     }
 
     @objc private func toggleShowTie() {

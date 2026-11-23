@@ -172,6 +172,13 @@ final class CatSettings {
     var macBookColorOption: MacBookColorOption {
         didSet { UserDefaults.standard.set(macBookColorOption.rawValue, forKey: "KuroCat.MacBookColorOption") }
     }
+    var appearance: CatAppearance {
+        didSet {
+            if let data = try? JSONEncoder().encode(appearance) {
+                UserDefaults.standard.set(data, forKey: "KuroCat.AppearanceV1")
+            }
+        }
+    }
 
     private init() {
         let d = UserDefaults.standard
@@ -182,9 +189,11 @@ final class CatSettings {
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true
         let savedScale = d.double(forKey: "KuroCat.Scale")
         scale = savedScale > 0.3 ? CGFloat(savedScale) : 1.0
-        coatTheme = CatCoatTheme(rawValue: d.string(forKey: "KuroCat.CoatTheme") ?? "") ?? .classicBlack
+        let loadedCoat = CatCoatTheme(rawValue: d.string(forKey: "KuroCat.CoatTheme") ?? "") ?? .classicBlack
+        coatTheme = loadedCoat
         keyboardTheme = KeyboardTheme(rawValue: d.string(forKey: "KuroCat.KeyboardTheme") ?? "") ?? .classicMilk
-        eyeTheme = EyeColorTheme(rawValue: d.string(forKey: "KuroCat.EyeTheme") ?? "") ?? .neonChartreuse
+        let loadedEye = EyeColorTheme(rawValue: d.string(forKey: "KuroCat.EyeTheme") ?? "") ?? .neonChartreuse
+        eyeTheme = loadedEye
         showTie = d.object(forKey: "KuroCat.ShowTie") as? Bool ?? false
         tieStyle = TieStyle(rawValue: d.string(forKey: "KuroCat.TieStyle") ?? "") ?? .necktie
         tieColor = TieColorTheme(rawValue: d.string(forKey: "KuroCat.TieColor") ?? "") ?? .cyan
@@ -192,6 +201,15 @@ final class CatSettings {
         tiredEyesMode = TiredEyesMode(rawValue: d.string(forKey: "KuroCat.TiredEyesMode") ?? "") ?? .autoLateNight
         deskSetupMode = DeskSetupMode(rawValue: d.string(forKey: "KuroCat.DeskSetupMode") ?? "") ?? .auto
         macBookColorOption = MacBookColorOption(rawValue: d.string(forKey: "KuroCat.MacBookColorOption") ?? "") ?? .auto
+
+        if let data = d.data(forKey: "KuroCat.AppearanceV1"),
+           let decoded = try? JSONDecoder().decode(CatAppearance.self, from: data) {
+            appearance = decoded
+        } else {
+            var migrated = (loadedCoat == .siamese) ? CatBreedPreset.siamese.appearance : CatBreedPreset.classicBlack.appearance
+            migrated.eyeColor = RGBAColor(loadedEye.primaryColor)
+            appearance = migrated
+        }
     }
 }
 
@@ -300,6 +318,8 @@ final class CatPhysics {
     var headOffsetY = Spring1D(0)
     var earFold = Spring1D(0)        // 0 = alert, 1 = relaxed petting ears
     var earTwitch = Spring1D(0)
+    var furSwayX = Spring1D(0)       // secondary plush long-fur horizontal sway physics
+    var furSwayY = Spring1D(0)       // secondary plush long-fur vertical bounce physics
 
     var eyeGaze = Spring2D(.zero)    // normalized [-1..1, -1..1]
     var pupilScale = Spring1D(1.0)
@@ -420,6 +440,8 @@ final class CatPhysics {
         bodySquash.velocity -= 1.3
         earTwitch.velocity += (key.prefersLeftPaw ? -3.8 : 3.8)
         headTilt.velocity += (key.prefersLeftPaw ? -1.4 : 1.4)
+        furSwayX.velocity += (key.prefersLeftPaw ? 14.0 : -14.0)
+        furSwayY.velocity += 18.0
         pupilScale.target = 1.16
 
         // Wake up immediately
@@ -877,12 +899,23 @@ final class CatPhysics {
             blinkTimer = 0
         }
 
-        // 7. Tail wag speed reacts organically to energy / petting / hunting tension / sleep!
+        // 7. Tail wag speed & plush long-fur sway physics!
         let kpmBoost = min(2.4, CGFloat(engine.currentKPM) / 160.0)
         let petBoost = max(petHeadIntensity, petBodyIntensity) * 1.4
         let huntBoost = hunt * 2.8
         let tailSpeed: CGFloat = max(0.35, 1.85 + kpmBoost + petBoost + huntBoost - sleepiness * 1.45)
         tailPhase += dt * tailSpeed
+
+        // Secondary long-fur spring physics (reacts with soft lag to head turns, body lean, typing & gentle breeze!)
+        let furAmt = max(0, min(1, CatSettings.shared.appearance.furLength))
+        let idleBreezeX = sin(time * 2.2) * (0.85 * furAmt)
+        let idleBreezeY = cos(time * 1.8) * (0.55 * furAmt)
+        let dragX = (-bodyShiftX.velocity * 0.045 - headYaw.velocity * 1.25 - headTilt.velocity * 4.5) * furAmt
+        let dragY = (-bodyShiftY.velocity * 0.055 - headOffsetY.velocity * 0.08 + bodySquash.velocity * 4.2) * furAmt
+        furSwayX.target = max(-7.5, min(7.5, dragX + idleBreezeX))
+        furSwayY.target = max(-6.0, min(6.0, dragY + idleBreezeY))
+        furSwayX.step(dt: dt, stiffness: 64, damping: 7.2)
+        furSwayY.step(dt: dt, stiffness: 68, damping: 7.6)
 
         // 8. Update per-keycap glows
         let visualActive = Set(activeKeys.map { $0.visualKey })

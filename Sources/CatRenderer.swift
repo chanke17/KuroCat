@@ -62,14 +62,14 @@ enum CatRenderer {
     }
 
     /// Main 60fps draw routine in flipped 360x320 logical coordinate space.
-    static func draw(in ctx: CGContext, physics: CatPhysics, showPermissionPill: Bool) {
+    static func draw(in ctx: CGContext, physics: CatPhysics, showPermissionPill: Bool, appearance overrideAppearance: CatAppearance? = nil) {
         ctx.saveGState()
         ctx.setAllowsAntialiasing(true)
         ctx.setShouldAntialias(true)
 
         let settings = CatSettings.shared
         let hw = HardwareMonitor.shared
-        let coat = settings.coatTheme
+        let appearance = overrideAppearance ?? settings.appearance
         let breath = physics.currentBreathOffset
         let shiftY = physics.bodyShiftY.value
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
@@ -86,23 +86,23 @@ enum CatRenderer {
                 in: ctx,
                 physics: physics,
                 color: hw.effectiveLaptopColor,
-                eyeTheme: settings.eyeTheme
+                glowColor: appearance.eyeGlowColor
             )
         } else if hw.shouldShowExternalKeyboard {
-            drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+            drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, glowColor: appearance.eyeGlowColor)
         }
 
-        // 3. Cat Tail (behind body)
-        drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
+        // 3. Cat Tail (behind body — with long-fur plume physics & pattern rings!)
+        drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, appearance: appearance)
 
-        // 4. 3D-Projected Ears (behind crown silhouette so Siamese seal-point ears emerge cleanly from cream skull!)
+        // 4. 3D-Projected Ears (behind crown silhouette + long-fur lynx tips!)
         let headCenter = CGPoint(
             x: seatX + physics.bodyTilt.value * 36 + physics.headYaw.value * 7.5,
             y: 126 + shiftY + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1
         )
-        drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat)
+        drawEarsLayer(in: ctx, center: headCenter, physics: physics, appearance: appearance)
 
-        // 5. Unified C1-Continuous Head + Neck + Pear Torso Silhouette + Siamese 2.5D Face Mask
+        // 5. Unified C1-Continuous Head + Neck + Pear Torso Silhouette + Fur Patterns + Long-Fur Fluff Physics
         drawUnifiedSilhouette(
             in: ctx,
             seatX: seatX,
@@ -110,7 +110,7 @@ enum CatRenderer {
             headCenter: headCenter,
             breath: breath,
             physics: physics,
-            coat: coat
+            appearance: appearance
         )
 
         // 5b. Configurable Necktie / Bow Tie Accessory (drawn on chest, behind front paws)
@@ -124,20 +124,20 @@ enum CatRenderer {
                 style: settings.tieStyle,
                 colorTheme: settings.tieColor,
                 pattern: settings.tiePattern,
-                coat: coat
+                appearance: appearance
             )
         }
 
         // 6. Hind Foot (3rd simultaneous key easter egg!)
         if physics.hindFootActive.value > 0.03 {
-            drawHindFoot(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
+            drawHindFoot(in: ctx, seatX: seatX, seatY: seatY, physics: physics, appearance: appearance)
         }
 
         // 7. 2.5D Turning Head Features: Luminous Eyes (with Sleep / Tired states) & Whiskers
-        drawHeadFeatures(in: ctx, center: headCenter, physics: physics, eyeTheme: settings.eyeTheme, coat: coat)
+        drawHeadFeatures(in: ctx, center: headCenter, physics: physics, appearance: appearance)
 
-        // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / Siamese chocolate socks!)
-        drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
+        // 8. Front Arms / Paws (over torso & keyboard/mouse with auto-contrast outlines / pattern socks!)
+        drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, appearance: appearance)
 
         // 8b. Apple Laptop Transparent A & B Side (open display lid drawn transparently so cat & paws remain unobstructed!)
         if hw.shouldShowLaptop {
@@ -150,7 +150,7 @@ enum CatRenderer {
         }
 
         // 10. Subtle Petting Sparkles / Sleep Z
-        drawSparkles(in: ctx, physics: physics, eyeTheme: settings.eyeTheme)
+        drawSparkles(in: ctx, physics: physics, accentColor: appearance.eyeColor.nsColor)
 
         // 11. Optional non-intrusive Permission Pill if global monitoring not yet granted
         if showPermissionPill {
@@ -249,7 +249,7 @@ enum CatRenderer {
         in ctx: CGContext,
         physics: CatPhysics,
         theme: KeyboardTheme,
-        eyeTheme: EyeColorTheme
+        glowColor: NSColor
     ) {
         let tl = KeyboardLayout.screenQuadPoint(su: -0.025, sv: -0.08)
         let tr = KeyboardLayout.screenQuadPoint(su: 1.025, sv: -0.08)
@@ -319,7 +319,7 @@ enum CatRenderer {
         // Individual keycaps — tight clean mechanical spacing matching the reference video
         let padU: CGFloat = 0.0028
         let padV: CGFloat = 0.014
-        let glowBaseColor = eyeTheme.glowColor
+        let glowBaseColor = glowColor
 
         for cap in KeyboardLayout.keycaps {
             let glow = physics.keyGlow[cap.key] ?? 0
@@ -370,7 +370,7 @@ enum CatRenderer {
         in ctx: CGContext,
         physics: CatPhysics,
         color: MacBookColor,
-        eyeTheme: EyeColorTheme
+        glowColor: NSColor
     ) {
         let pal = color.palette
 
@@ -445,7 +445,7 @@ enum CatRenderer {
         let tpClick = max(physics.mousePressLeft.value, physics.mousePressRight.value)
         var tpFill = pal.trackpadFill
         if physics.leftPawOnTrackpad && tpClick > 0.04 {
-            tpFill = blendColor(tpFill, eyeTheme.glowColor, t: tpClick * 0.28)
+            tpFill = blendColor(tpFill, glowColor, t: tpClick * 0.28)
         }
         ctx.setFillColor(tpFill.cgColor)
         ctx.addPath(tpPath)
@@ -483,7 +483,7 @@ enum CatRenderer {
         // 7. Flat black MacBook scissor-switch keycaps with subtle backlit glow when pressed
         let padU: CGFloat = 0.0032
         let padV: CGFloat = 0.016
-        let glowBaseColor = eyeTheme.glowColor
+        let glowBaseColor = glowColor
 
         for cap in KeyboardLayout.keycaps {
             let glow = physics.keyGlow[cap.key] ?? 0
@@ -643,37 +643,100 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    // MARK: - Tail
+    // MARK: - Tail (with Pattern Markings & Long-Fur Plume Physics!)
 
-    private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, coat: CatCoatTheme) {
+    private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, appearance: CatAppearance) {
         let p = physics.tailPhase
         let hunt = max(0, min(1, physics.huntIntensity.value))
         let sleepCalm = 1.0 - physics.sleepiness * 0.65
+        let fur = max(0, min(1, appearance.furLength))
+        let swayX = physics.furSwayX.value
+        let swayY = physics.furSwayY.value
+
         let wag1 = sin(p) * (8.0 + hunt * 5.5) * sleepCalm
         let wag2 = cos(p * 1.3) * (6.0 + hunt * 4.5) * sleepCalm
-        // Tail drops lower & swishes tautly when stalking/hunting, or curls low & cozy when sleeping!
         let huntDrop = hunt * 14.0 + physics.sleepiness * 18.0
         let sleepCurlIn = physics.sleepiness * 14.0
 
         // Signature low sweep out to the right, then playful upward curl at the tip!
         let root = CGPoint(x: seatX + 34, y: seatY - 6)
-        let c1 = CGPoint(x: seatX + 64 - sleepCurlIn * 0.3, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4)
-        let c2 = CGPoint(x: seatX + 66 - sleepCurlIn * 0.7 + wag2 * 0.4, y: seatY - 26 + wag1 * 0.7 + huntDrop)
-        let tip = CGPoint(x: seatX + 91 - sleepCurlIn + wag2 * 0.5, y: seatY - 30 + wag1 * 0.85 + huntDrop)
+        let c1 = CGPoint(x: seatX + 64 - sleepCurlIn * 0.3 + swayX * 0.3, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4 + swayY * 0.3)
+        let c2 = CGPoint(x: seatX + 66 - sleepCurlIn * 0.7 + wag2 * 0.4 + swayX * 0.8, y: seatY - 26 + wag1 * 0.7 + huntDrop + swayY * 0.7)
+        let tip = CGPoint(x: seatX + 91 - sleepCurlIn + wag2 * 0.5 + swayX * 1.3, y: seatY - 30 + wag1 * 0.85 + huntDrop + swayY * 1.1)
+
+        let baseColor: NSColor
+        switch appearance.pattern {
+        case .colorpoint: baseColor = appearance.secondaryColor.nsColor
+        case .calico:     baseColor = appearance.tertiaryColor.nsColor
+        default:          baseColor = appearance.primaryColor.nsColor
+        }
+
+        let tailWidth: CGFloat = 11.0 + fur * 8.5
 
         ctx.saveGState()
-        let tailColor = (coat == .siamese) ? siamesePoint : catBlack
-        ctx.setStrokeColor(tailColor.cgColor)
-        ctx.setLineWidth(11.0)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
+
+        // Subtle dark outline for light/medium tails
+        if let outline = appearance.silhouetteOutlineColor {
+            ctx.setStrokeColor(outline.cgColor)
+            ctx.setLineWidth(tailWidth + 2.6)
+            ctx.move(to: root)
+            ctx.addCurve(to: tip, control1: c1, control2: c2)
+            ctx.strokePath()
+        }
+
+        // Main tail stroke
+        ctx.setStrokeColor(baseColor.cgColor)
+        ctx.setLineWidth(tailWidth)
         ctx.move(to: root)
         ctx.addCurve(to: tip, control1: c1, control2: c2)
         ctx.strokePath()
+
+        // Fluffy long-fur plume tufts along the tail curve!
+        if fur > 0.12 {
+            let tuftCount = 6
+            let furColor = baseColor.blended(withFraction: 0.12, of: .white) ?? baseColor
+            for i in 1...tuftCount {
+                let t = CGFloat(i) / CGFloat(tuftCount + 1)
+                let pt = cubicPoint(root, c1, c2, tip, t: t)
+                let r = (5.2 + t * 5.2) * fur
+                let lagX = swayX * (0.4 + t * 0.9)
+                let lagY = swayY * (0.4 + t * 0.8) + 2.5 * fur
+                let puffRect = CGRect(x: pt.x - r + lagX, y: pt.y - r * 0.85 + lagY, width: r * 2.0, height: r * 1.85)
+                if let outline = appearance.silhouetteOutlineColor {
+                    ctx.setFillColor(outline.withAlphaComponent(0.35).cgColor)
+                    ctx.fillEllipse(in: puffRect.insetBy(dx: -0.9, dy: -0.9))
+                }
+                ctx.setFillColor(furColor.cgColor)
+                ctx.fillEllipse(in: puffRect)
+            }
+        }
+
+        // Pattern rings / spots on tail (Tabby stripes or Calico/Spotted accents)
+        if appearance.pattern == .tabby || appearance.pattern == .spotted {
+            ctx.setFillColor(appearance.secondaryColor.nsColor.withAlphaComponent(0.85).cgColor)
+            for t in [0.28, 0.50, 0.72, 0.90] as [CGFloat] {
+                let pt = cubicPoint(root, c1, c2, tip, t: t)
+                let r = tailWidth * 0.36
+                ctx.fillEllipse(in: CGRect(x: pt.x - r, y: pt.y - r * 0.85, width: r * 2.0, height: r * 1.7))
+            }
+        } else if appearance.pattern == .calico {
+            ctx.setFillColor(appearance.secondaryColor.nsColor.cgColor)
+            let pt = cubicPoint(root, c1, c2, tip, t: 0.55)
+            let r = tailWidth * 0.45
+            ctx.fillEllipse(in: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2.0, height: r * 2.0))
+        } else if appearance.pattern == .tuxedo {
+            // Cute white tail tip on Tuxedo!
+            ctx.setFillColor(appearance.secondaryColor.nsColor.cgColor)
+            let r = tailWidth * 0.46
+            ctx.fillEllipse(in: CGRect(x: tip.x - r, y: tip.y - r, width: r * 2.0, height: r * 2.0))
+        }
+
         ctx.restoreGState()
     }
 
-    // MARK: - Unified C1-Continuous Cat Silhouette (Crown -> Cheeks -> Plush Neck -> Pear Hips)
+    // MARK: - Unified C1-Continuous Cat Silhouette + Fur Patterns + Long-Fur Fluff Physics
 
     private static func drawUnifiedSilhouette(
         in ctx: CGContext,
@@ -682,12 +745,15 @@ enum CatRenderer {
         headCenter: CGPoint,
         breath: CGFloat,
         physics: CatPhysics,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         let yaw = physics.headYaw.value
         let pitch = physics.headPitch.value
         let hTilt = physics.headTilt.value
         let bTilt = physics.bodyTilt.value
+        let fur = max(0, min(1, appearance.furLength))
+        let swayX = physics.furSwayX.value
+        let swayY = physics.furSwayY.value
 
         let cH = cos(hTilt), sH = sin(hTilt)
         func H(_ lx: CGFloat, _ ly: CGFloat) -> CGPoint {
@@ -711,41 +777,59 @@ enum CatRenderer {
 
         let cheekShift = yaw * 3.0
         let crownDrop = pitch * 2.0
-        let leftCheekX: CGFloat = -42.5 + cheekShift * 0.4
-        let rightCheekX: CGFloat = 42.5 + cheekShift * 0.4
+        // Long fur subtly plumps the cheeks and torso silhouette!
+        let fluffW: CGFloat = fur * 4.5
+        let leftCheekX: CGFloat = -42.5 - fluffW * 0.85 + cheekShift * 0.4
+        let rightCheekX: CGFloat = 42.5 + fluffW * 0.85 + cheekShift * 0.4
 
-        // ONE single tangent-continuous closed cubic Bezier path — mathematically impossible to form any ledge or protrusion!
-        let crown  = H(cheekShift * 0.2, -30 + crownDrop)
+        // ONE single tangent-continuous closed cubic Bezier path
+        let crown  = H(cheekShift * 0.2, -30 - fur * 1.8 + crownDrop)
         let rCheek = H(rightCheekX, 5)
-        let rHip   = B(49.0, -14)
-        let rBot   = B(24.0, 12)
-        let lBot   = B(-24.0, 12)
-        let lHip   = B(-49.0, -14)
+        let rHip   = B(49.0 + fluffW, -14)
+        let rBot   = B(24.0 + fluffW * 0.4, 12)
+        let lBot   = B(-24.0 - fluffW * 0.4, 12)
+        let lHip   = B(-49.0 - fluffW, -14)
         let lCheek = H(leftCheekX, 5)
 
         let path = CGMutablePath()
         path.move(to: crown)
-        path.addCurve(to: rCheek, control1: H(26 + cheekShift * 0.3, -30 + crownDrop), control2: H(rightCheekX + 1.5, -14))
-        path.addCurve(to: rHip,   control1: H(rightCheekX - 2.5, 24), control2: B(51.5, -48 + breath * 0.5))
-        path.addCurve(to: rBot,   control1: B(47.0, 5), control2: B(36.0, 12))
+        path.addCurve(to: rCheek, control1: H(26 + fluffW * 0.5 + cheekShift * 0.3, -30 + crownDrop), control2: H(rightCheekX + 1.5, -14))
+        path.addCurve(to: rHip,   control1: H(rightCheekX - 2.5, 24), control2: B(51.5 + fluffW, -48 + breath * 0.5))
+        path.addCurve(to: rBot,   control1: B(47.0 + fluffW, 5), control2: B(36.0 + fluffW * 0.6, 12))
         path.addLine(to: lBot)
-        path.addCurve(to: lHip,   control1: B(-36.0, 12), control2: B(-47.0, 5))
-        path.addCurve(to: lCheek, control1: B(-51.5, -48 + breath * 0.5), control2: H(leftCheekX + 2.5, 24))
-        path.addCurve(to: crown,  control1: H(leftCheekX - 1.5, -14), control2: H(-26 + cheekShift * 0.3, -30 + crownDrop))
+        path.addCurve(to: lHip,   control1: B(-36.0 - fluffW * 0.6, 12), control2: B(-47.0 - fluffW, 5))
+        path.addCurve(to: lCheek, control1: B(-51.5 - fluffW, -48 + breath * 0.5), control2: H(leftCheekX + 2.5, 24))
+        path.addCurve(to: crown,  control1: H(leftCheekX - 1.5, -14), control2: H(-26 - fluffW * 0.5 + cheekShift * 0.3, -30 + crownDrop))
         path.closeSubpath()
 
-        ctx.saveGState()
-        if coat == .classicBlack {
-            ctx.setFillColor(catBlack.cgColor)
-            ctx.addPath(path)
-            ctx.fillPath()
-        } else {
-            // Siamese warm oat-milk cream gradient + soft toasted back shading + 2.5D rotating seal-point face mask!
-            ctx.addPath(path)
-            ctx.clip()
+        // 0. Long-fur swaying outer cheek tufts (drawn behind/blending with silhouette for medium/long-haired breeds!)
+        if fur > 0.28 {
+            let cheekFur = (fur - 0.28) / 0.72
+            drawLongFurCheekTufts(
+                in: ctx,
+                headCenter: headCenter,
+                hTilt: hTilt,
+                yaw: yaw,
+                fur: cheekFur,
+                swayX: swayX,
+                swayY: swayY,
+                appearance: appearance
+            )
+        }
 
-            let cs = CGColorSpaceCreateDeviceRGB()
-            let bodyColors = [siameseCream.cgColor, siameseLatte.cgColor] as CFArray
+        // 1. Base coat fill + clipped pattern markings
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.clip()
+
+        let cs = CGColorSpaceCreateDeviceRGB()
+        if appearance.isDarkCoat {
+            ctx.setFillColor(appearance.primaryColor.cgColor)
+            ctx.fill(CGRect(x: 0, y: 0, width: 360, height: 320))
+        } else {
+            let topCol = appearance.primaryColor.nsColor
+            let botCol = appearance.primaryColor.darkened(by: 0.09)
+            let bodyColors = [topCol.cgColor, botCol.cgColor] as CFArray
             if let grad = CGGradient(colorsSpace: cs, colors: bodyColors, locations: [0.15, 1.0]) {
                 ctx.drawLinearGradient(
                     grad,
@@ -754,26 +838,33 @@ enum CatRenderer {
                     options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
                 )
             }
+        }
 
-            // Soft toasted ear-base blend at top crown so espresso ears melt organically into cream head
-            let yawRad = yaw * 0.50
-            let pitchRad = pitch * 0.36
+        let yawRad = yaw * 0.50
+        let pitchRad = pitch * 0.36
+
+        // Pattern-specific markings clipped cleanly inside the unified silhouette
+        switch appearance.pattern {
+        case .solid:
+            break
+
+        case .colorpoint:
             ctx.saveGState()
             ctx.translateBy(x: headCenter.x, y: headCenter.y)
             ctx.rotate(by: hTilt)
-
-            // 2.5D Rotating Seal-Point "挖煤" Face Mask (moves naturally across cheeks as head turns!)
             let maskCenter = projectHead3D(x: 0, y: 2.5, z: 27.0, yawRad: yawRad, pitchRad: pitchRad).pt
             let maskScaleX = max(0.76, cos(yawRad * 0.7))
             let maskScaleY = max(0.82, cos(pitchRad * 0.7))
             ctx.saveGState()
             ctx.translateBy(x: maskCenter.x, y: maskCenter.y)
             ctx.scaleBy(x: maskScaleX * 1.18, y: maskScaleY * 0.88)
+            let ptCol = appearance.secondaryColor.nsColor
+            let midCol = appearance.tertiaryColor.nsColor
             let maskColors = [
-                siamesePoint.cgColor,
-                siamesePoint.withAlphaComponent(0.96).cgColor,
-                siameseMocha.withAlphaComponent(0.70).cgColor,
-                siameseMocha.withAlphaComponent(0.0).cgColor
+                ptCol.cgColor,
+                ptCol.withAlphaComponent(0.95).cgColor,
+                midCol.withAlphaComponent(0.72).cgColor,
+                midCol.withAlphaComponent(0.0).cgColor
             ] as CFArray
             if let maskGrad = CGGradient(colorsSpace: cs, colors: maskColors, locations: [0.0, 0.44, 0.74, 1.0]) {
                 ctx.drawRadialGradient(
@@ -785,17 +876,165 @@ enum CatRenderer {
             }
             ctx.restoreGState()
             ctx.restoreGState()
-        }
-        ctx.restoreGState()
 
-        // Crisp subtle warm-cocoa outline around Siamese cream body so it pops on light & dark wallpapers!
-        if coat == .siamese {
+        case .tuxedo:
+            let bibCol = appearance.secondaryColor.nsColor
+            // Crisp tuxedo chest bib & belly V
             ctx.saveGState()
-            ctx.setStrokeColor(siameseOutline.cgColor)
+            ctx.setFillColor(bibCol.cgColor)
+            let bib = CGMutablePath()
+            let chestTop = H(yaw * 5.0, 22)
+            let bibL = B(-22, -32)
+            let bibR = B(22, -32)
+            let bibBot = B(0, 14)
+            bib.move(to: chestTop)
+            bib.addQuadCurve(to: bibR, control: H(20 + yaw * 4.0, 34))
+            bib.addQuadCurve(to: bibBot, control: B(26, -4))
+            bib.addQuadCurve(to: bibL, control: B(-26, -4))
+            bib.addQuadCurve(to: chestTop, control: H(-20 + yaw * 4.0, 34))
+            bib.closeSubpath()
+            ctx.addPath(bib)
+            ctx.fillPath()
+
+            // Cute chin & muzzle blaze on the 2.5D head!
+            ctx.translateBy(x: headCenter.x, y: headCenter.y)
+            ctx.rotate(by: hTilt)
+            let muzzle = projectHead3D(x: 0, y: 14.0, z: 27.0, yawRad: yawRad, pitchRad: pitchRad).pt
+            ctx.fillEllipse(in: CGRect(x: muzzle.x - 16, y: muzzle.y - 8, width: 32, height: 19))
+            ctx.restoreGState()
+
+        case .tabby:
+            let stripeCol = appearance.secondaryColor.nsColor
+            let bellyCol = appearance.tertiaryColor.nsColor
+
+            // Soft lighter chin & chest belly
+            ctx.saveGState()
+            ctx.setFillColor(bellyCol.withAlphaComponent(0.75).cgColor)
+            let bellyCenter = B(0, -18)
+            ctx.fillEllipse(in: CGRect(x: bellyCenter.x - 24, y: bellyCenter.y - 26, width: 48, height: 58))
+            ctx.restoreGState()
+
+            // Curved flank & shoulder tabby stripes
+            ctx.saveGState()
+            ctx.setStrokeColor(stripeCol.withAlphaComponent(0.84).cgColor)
+            ctx.setLineCap(.round)
+            for side in [-1.0, 1.0] as [CGFloat] {
+                for idx in 0..<3 {
+                    let yOff = -44.0 + CGFloat(idx) * 16.0
+                    let p0 = B(side * 54, yOff)
+                    let p1 = B(side * 24, yOff + 5.0)
+                    let ctrl = B(side * 38, yOff - 4.0)
+                    ctx.setLineWidth(5.4 - CGFloat(idx) * 0.4)
+                    ctx.move(to: p0)
+                    ctx.addQuadCurve(to: p1, control: ctrl)
+                    ctx.strokePath()
+                }
+            }
+            ctx.restoreGState()
+
+            // 2.5D Forehead "M" tabby mark + cheek stripes!
+            ctx.saveGState()
+            ctx.translateBy(x: headCenter.x, y: headCenter.y)
+            ctx.rotate(by: hTilt)
+            ctx.setStrokeColor(stripeCol.withAlphaComponent(0.88).cgColor)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            ctx.setLineWidth(2.8)
+            for dx in [-7.5, 0.0, 7.5] as [CGFloat] {
+                let topP = projectHead3D(x: dx * 1.1, y: -25.0, z: 22.0, yawRad: yawRad, pitchRad: pitchRad).pt
+                let botP = projectHead3D(x: dx * 0.75, y: -14.5, z: 26.0, yawRad: yawRad, pitchRad: pitchRad).pt
+                ctx.move(to: topP)
+                ctx.addLine(to: botP)
+            }
+            ctx.strokePath()
+            // Cheek tabby bars
+            ctx.setLineWidth(2.5)
+            for sign in [-1.0, 1.0] as [CGFloat] {
+                for rowY in [4.0, 10.5] as [CGFloat] {
+                    let p0 = projectHead3D(x: sign * 39.0, y: rowY - 1.5, z: 10.0, yawRad: yawRad, pitchRad: pitchRad).pt
+                    let p1 = projectHead3D(x: sign * 25.0, y: rowY + 1.5, z: 22.0, yawRad: yawRad, pitchRad: pitchRad).pt
+                    ctx.move(to: p0)
+                    ctx.addLine(to: p1)
+                }
+            }
+            ctx.strokePath()
+            ctx.restoreGState()
+
+        case .calico:
+            let patch1 = appearance.secondaryColor.nsColor
+            let patch2 = appearance.tertiaryColor.nsColor
+            // Asymmetric calico patches on head (2.5D projected) & torso!
+            ctx.saveGState()
+            ctx.translateBy(x: headCenter.x, y: headCenter.y)
+            ctx.rotate(by: hTilt)
+            let pL = projectHead3D(x: -22.0, y: -15.0, z: 18.0, yawRad: yawRad, pitchRad: pitchRad).pt
+            ctx.setFillColor(patch1.cgColor)
+            ctx.fillEllipse(in: CGRect(x: pL.x - 24, y: pL.y - 20, width: 44, height: 38))
+            let pR = projectHead3D(x: 24.0, y: -12.0, z: 17.0, yawRad: yawRad, pitchRad: pitchRad).pt
+            ctx.setFillColor(patch2.cgColor)
+            ctx.fillEllipse(in: CGRect(x: pR.x - 20, y: pR.y - 18, width: 42, height: 34))
+            ctx.restoreGState()
+
+            // Torso calico patches
+            ctx.saveGState()
+            let hipPatch1 = B(32, -26)
+            ctx.setFillColor(patch1.cgColor)
+            ctx.fillEllipse(in: CGRect(x: hipPatch1.x - 24, y: hipPatch1.y - 22, width: 48, height: 42))
+            let hipPatch2 = B(-34, -10)
+            ctx.setFillColor(patch2.cgColor)
+            ctx.fillEllipse(in: CGRect(x: hipPatch2.x - 22, y: hipPatch2.y - 18, width: 44, height: 36))
+            ctx.restoreGState()
+
+        case .spotted:
+            let spotCol = appearance.secondaryColor.nsColor
+            ctx.saveGState()
+            ctx.setFillColor(spotCol.cgColor)
+            // Head spots (2.5D)
+            ctx.saveGState()
+            ctx.translateBy(x: headCenter.x, y: headCenter.y)
+            ctx.rotate(by: hTilt)
+            let hs1 = projectHead3D(x: -18, y: -17, z: 20, yawRad: yawRad, pitchRad: pitchRad).pt
+            let hs2 = projectHead3D(x: 20, y: -14, z: 19, yawRad: yawRad, pitchRad: pitchRad).pt
+            ctx.fillEllipse(in: CGRect(x: hs1.x - 12, y: hs1.y - 10, width: 24, height: 20))
+            ctx.fillEllipse(in: CGRect(x: hs2.x - 9, y: hs2.y - 8, width: 18, height: 15))
+            ctx.restoreGState()
+            // Body spots
+            let spots: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+                (-30, -34, 24, 20), (28, -36, 20, 18), (34, -8, 26, 22), (-24, -4, 18, 16)
+            ]
+            for (bx, by, bw, bh) in spots {
+                let pt = B(bx, by)
+                ctx.fillEllipse(in: CGRect(x: pt.x - bw * 0.5, y: pt.y - bh * 0.5, width: bw, height: bh))
+            }
+            ctx.restoreGState()
+        }
+
+        ctx.restoreGState() // end silhouette clip
+
+        // Crisp subtle outline for medium/light coats so they pop on both light & dark wallpapers!
+        if let outline = appearance.silhouetteOutlineColor {
+            ctx.saveGState()
+            ctx.setStrokeColor(outline.cgColor)
             ctx.setLineWidth(1.5)
             ctx.addPath(path)
             ctx.strokePath()
             ctx.restoreGState()
+        }
+
+        // Long-fur plush chest ruff / mane (only for medium/long-haired breeds, sways with furSwayX/Y!)
+        if fur > 0.32 {
+            let ruffFur = (fur - 0.32) / 0.68
+            drawLongFurChestRuff(
+                in: ctx,
+                seatX: seatX,
+                headCenter: headCenter,
+                breath: breath,
+                tilt: bTilt * 0.65 + hTilt * 0.35,
+                fur: ruffFur,
+                swayX: swayX,
+                swayY: swayY,
+                appearance: appearance
+            )
         }
 
         // Tucked hind paws peeking softly along bottom edge
@@ -803,7 +1042,12 @@ enum CatRenderer {
         ctx.translateBy(x: seatX, y: seatY)
         ctx.rotate(by: bTilt)
         ctx.scaleBy(x: sx, y: sy)
-        ctx.setFillColor((coat == .siamese ? siamesePoint : catBlack).cgColor)
+        let hindPawColor: NSColor
+        switch appearance.pattern {
+        case .colorpoint, .tuxedo: hindPawColor = appearance.secondaryColor.nsColor
+        default:                   hindPawColor = appearance.primaryColor.nsColor
+        }
+        ctx.setFillColor(hindPawColor.cgColor)
 
         ctx.fillEllipse(in: CGRect(x: -35, y: 3, width: 17, height: 11))
         if physics.hindFootActive.value < 0.35 {
@@ -811,7 +1055,7 @@ enum CatRenderer {
         }
 
         // Subtle bottom rim highlights on tucked haunches
-        let rimColor = (coat == .siamese) ? siameseCream.withAlphaComponent(0.55) : contourMint.withAlphaComponent(0.58)
+        let rimColor = appearance.limbSeparationColor.withAlphaComponent(0.58)
         ctx.setStrokeColor(rimColor.cgColor)
         ctx.setLineWidth(1.3)
         ctx.setLineCap(.round)
@@ -821,6 +1065,141 @@ enum CatRenderer {
             ctx.addArc(center: CGPoint(x: 26.5, y: 8.5), radius: 7.5, startAngle: 0.25, endAngle: .pi - 0.25, clockwise: false)
             ctx.strokePath()
         }
+        ctx.restoreGState()
+    }
+
+    /// Swaying plush cheek tufts for medium/long-haired breeds (Ragdoll, Persian, Maine Coon!)
+    private static func drawLongFurCheekTufts(
+        in ctx: CGContext,
+        headCenter: CGPoint,
+        hTilt: CGFloat,
+        yaw: CGFloat,
+        fur: CGFloat,
+        swayX: CGFloat,
+        swayY: CGFloat,
+        appearance: CatAppearance
+    ) {
+        ctx.saveGState()
+        ctx.translateBy(x: headCenter.x, y: headCenter.y)
+        ctx.rotate(by: hTilt)
+
+        let baseCol = appearance.primaryColor.nsColor
+        let outline = appearance.silhouetteOutlineColor
+
+        for sign in [-1.0, 1.0] as [CGFloat] {
+            let baseX = sign * (38.5 + fur * 2.0) + yaw * 2.0
+            let tuftLen = 5.5 + fur * 10.5
+            let tuft = CGMutablePath()
+            // Soft downward-sweeping plush cheek fluff (rounded, natural feline mane)
+            tuft.move(to: CGPoint(x: baseX - sign * 6.0, y: -1.0))
+            tuft.addQuadCurve(
+                to: CGPoint(x: baseX + sign * tuftLen + swayX * 0.65, y: 11.0 + fur * 2.5 + swayY * 0.65),
+                control: CGPoint(x: baseX + sign * (tuftLen * 0.85), y: 2.0)
+            )
+            tuft.addQuadCurve(
+                to: CGPoint(x: baseX + sign * (tuftLen * 0.72) + swayX * 0.85, y: 21.0 + fur * 4.5 + swayY * 0.85),
+                control: CGPoint(x: baseX + sign * (tuftLen * 0.95), y: 17.0 + fur * 2.0)
+            )
+            tuft.addQuadCurve(
+                to: CGPoint(x: baseX - sign * 7.0, y: 26.0 + fur * 2.0),
+                control: CGPoint(x: baseX + sign * 2.0, y: 27.5 + fur * 2.0)
+            )
+            tuft.closeSubpath()
+
+            ctx.setFillColor(baseCol.cgColor)
+            ctx.addPath(tuft)
+            ctx.fillPath()
+            if let outline {
+                ctx.setStrokeColor(outline.withAlphaComponent(0.75).cgColor)
+                ctx.setLineWidth(1.25)
+                ctx.addPath(tuft)
+                ctx.strokePath()
+            }
+        }
+        ctx.restoreGState()
+    }
+
+    /// Layered fluffy chest ruff / mane below the neck (feathered top, only strokes lower fur tips!)
+    private static func drawLongFurChestRuff(
+        in ctx: CGContext,
+        seatX: CGFloat,
+        headCenter: CGPoint,
+        breath: CGFloat,
+        tilt: CGFloat,
+        fur: CGFloat,
+        swayX: CGFloat,
+        swayY: CGFloat,
+        appearance: CatAppearance
+    ) {
+        let ruffX = seatX * 0.45 + headCenter.x * 0.55
+        let ruffY = headCenter.y + 38.0 + breath * 0.4
+        let ruffColor: NSColor
+        switch appearance.pattern {
+        case .tuxedo: ruffColor = appearance.secondaryColor.nsColor
+        case .tabby:  ruffColor = appearance.tertiaryColor.nsColor
+        default:
+            ruffColor = appearance.isDarkCoat
+                ? appearance.primaryColor.lightened(by: 0.06)
+                : appearance.primaryColor.lightened(by: 0.16)
+        }
+
+        ctx.saveGState()
+        ctx.translateBy(x: ruffX, y: ruffY)
+        ctx.rotate(by: tilt)
+
+        let spread: CGFloat = 20.0 + fur * 9.0
+        let drop: CGFloat = 10.0 + fur * 13.0
+
+        // Soft fill shape that melts seamlessly upward into the chest
+        let ruffFill = CGMutablePath()
+        ruffFill.move(to: CGPoint(x: -spread, y: -6.0))
+        ruffFill.addQuadCurve(
+            to: CGPoint(x: -spread * 0.52 + swayX * 0.5, y: drop * 0.82 + swayY * 0.6),
+            control: CGPoint(x: -spread * 0.92, y: drop * 0.50)
+        )
+        ruffFill.addQuadCurve(
+            to: CGPoint(x: swayX * 0.85, y: drop + swayY * 0.9),
+            control: CGPoint(x: -spread * 0.22 + swayX * 0.65, y: drop * 0.68)
+        )
+        ruffFill.addQuadCurve(
+            to: CGPoint(x: spread * 0.52 + swayX * 0.5, y: drop * 0.82 + swayY * 0.6),
+            control: CGPoint(x: spread * 0.22 + swayX * 0.65, y: drop * 0.68)
+        )
+        ruffFill.addQuadCurve(
+            to: CGPoint(x: spread, y: -6.0),
+            control: CGPoint(x: spread * 0.92, y: drop * 0.50)
+        )
+        ruffFill.closeSubpath()
+
+        ctx.setFillColor(ruffColor.withAlphaComponent(0.88).cgColor)
+        ctx.addPath(ruffFill)
+        ctx.fillPath()
+
+        // Stroke ONLY the lower fluffy scalloped fur tips (no hard horizontal top line!)
+        let edgeCol = appearance.isDarkCoat
+            ? contourMint.withAlphaComponent(0.30 * fur)
+            : appearance.primaryColor.darkened(by: 0.35).withAlphaComponent(0.42 * fur)
+        ctx.setStrokeColor(edgeCol.cgColor)
+        ctx.setLineWidth(1.15)
+        ctx.setLineCap(.round)
+        ctx.move(to: CGPoint(x: -spread * 0.88, y: drop * 0.20))
+        ctx.addQuadCurve(
+            to: CGPoint(x: -spread * 0.52 + swayX * 0.5, y: drop * 0.82 + swayY * 0.6),
+            control: CGPoint(x: -spread * 0.82, y: drop * 0.62)
+        )
+        ctx.addQuadCurve(
+            to: CGPoint(x: swayX * 0.85, y: drop + swayY * 0.9),
+            control: CGPoint(x: -spread * 0.22 + swayX * 0.65, y: drop * 0.68)
+        )
+        ctx.addQuadCurve(
+            to: CGPoint(x: spread * 0.52 + swayX * 0.5, y: drop * 0.82 + swayY * 0.6),
+            control: CGPoint(x: spread * 0.22 + swayX * 0.65, y: drop * 0.68)
+        )
+        ctx.addQuadCurve(
+            to: CGPoint(x: spread * 0.88, y: drop * 0.20),
+            control: CGPoint(x: spread * 0.82, y: drop * 0.62)
+        )
+        ctx.strokePath()
         ctx.restoreGState()
     }
 
@@ -835,14 +1214,14 @@ enum CatRenderer {
         style: TieStyle,
         colorTheme: TieColorTheme,
         pattern: TiePattern,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         let pal = colorTheme.palette
         let yaw = physics.headYaw.value
         let neckX = seatX * 0.45 + headCenter.x * 0.55 + yaw * 4.5
         let neckY = headCenter.y + 30.5 + breath * 0.35
         let tilt = physics.bodyTilt.value * 0.65 + physics.headTilt.value * 0.35
-        let outlineColor = (coat == .siamese ? siameseOutline : NSColor(calibratedWhite: 0.04, alpha: 0.86)).cgColor
+        let outlineColor = (appearance.silhouetteOutlineColor ?? NSColor(calibratedWhite: 0.04, alpha: 0.86)).cgColor
 
         ctx.saveGState()
         ctx.translateBy(x: neckX, y: neckY)
@@ -1104,7 +1483,7 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    private static func drawHindFoot(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, coat: CatCoatTheme) {
+    private static func drawHindFoot(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, appearance: CatAppearance) {
         let hip = CGPoint(x: seatX + 26, y: seatY + 2)
         let target = physics.hindFoot.point
         let mid = CGPoint(
@@ -1121,7 +1500,7 @@ enum CatRenderer {
             endWidth: 12.0,
             outlineOnLeftSide: true,
             outlineAlpha: 0.85 * physics.hindFootActive.value,
-            coat: coat
+            appearance: appearance
         )
     }
 
@@ -1154,7 +1533,7 @@ enum CatRenderer {
         in ctx: CGContext,
         center: CGPoint,
         physics: CatPhysics,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
@@ -1165,8 +1544,8 @@ enum CatRenderer {
         let fold = physics.earFold.value
         let twitch = physics.earTwitch.value * 0.045
 
-        drawEar3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: twitch, coat: coat)
-        drawEar3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: -twitch, coat: coat)
+        drawEar3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: twitch, physics: physics, appearance: appearance)
+        drawEar3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: -twitch, physics: physics, appearance: appearance)
 
         ctx.restoreGState()
     }
@@ -1177,8 +1556,7 @@ enum CatRenderer {
         in ctx: CGContext,
         center: CGPoint,
         physics: CatPhysics,
-        eyeTheme: EyeColorTheme,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
@@ -1190,11 +1568,11 @@ enum CatRenderer {
         let pitchRad = pitch * 0.36          // ~±20.5° authentic head nod
 
         // 1. 3D-Projected Eyes with authentic spherical foreshortening & parallax!
-        drawEye3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, coat: coat)
-        drawEye3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, coat: coat)
+        drawEye3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, physics: physics, appearance: appearance)
+        drawEye3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, physics: physics, appearance: appearance)
 
         // 2. 3D-Projected Whiskers (outer-side whiskers poke out past silhouette when turning!)
-        drawWhiskers3D(in: ctx, yawRad: yawRad, pitchRad: pitchRad, physics: physics, coat: coat)
+        drawWhiskers3D(in: ctx, yawRad: yawRad, pitchRad: pitchRad, physics: physics, appearance: appearance)
 
         ctx.restoreGState()
     }
@@ -1206,10 +1584,12 @@ enum CatRenderer {
         pitchRad: CGFloat,
         fold: CGFloat,
         twitch: CGFloat,
-        coat: CatCoatTheme
+        physics: CatPhysics,
+        appearance: CatAppearance
     ) {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
         let foldAngle = sign * (0.06 + fold * 0.34) + twitch
+        let fur = max(0, min(1, appearance.furLength))
 
         let tipDx = sin(foldAngle) * 32.0
         let tipDy = -cos(foldAngle) * 32.0
@@ -1236,10 +1616,41 @@ enum CatRenderer {
         )
         ear.closeSubpath()
 
+        let earColor: NSColor
+        switch appearance.pattern {
+        case .colorpoint:
+            earColor = appearance.secondaryColor.nsColor
+        case .calico:
+            earColor = isLeft ? appearance.secondaryColor.nsColor : appearance.tertiaryColor.nsColor
+        default:
+            earColor = appearance.primaryColor.nsColor
+        }
+
         ctx.saveGState()
-        ctx.setFillColor((coat == .siamese ? siamesePoint : catBlack).cgColor)
+        ctx.setFillColor(earColor.cgColor)
         ctx.addPath(ear)
         ctx.fillPath()
+        if let outline = appearance.silhouetteOutlineColor {
+            ctx.setStrokeColor(outline.cgColor)
+            ctx.setLineWidth(1.3)
+            ctx.addPath(ear)
+            ctx.strokePath()
+        }
+
+        // Long-fur lynx ear-tips & fluffy inner ear tufts (sway softly with furSway!)
+        if fur > 0.2 {
+            let swayX = physics.furSwayX.value * 0.45
+            let swayY = physics.furSwayY.value * 0.35
+            let tipTuft = CGMutablePath()
+            tipTuft.move(to: CGPoint(x: tip3D.x - sign * 2.5, y: tip3D.y + 1.5))
+            tipTuft.addLine(to: CGPoint(x: tip3D.x + sign * (2.5 * fur) + swayX, y: tip3D.y - 6.5 * fur + swayY))
+            tipTuft.addLine(to: CGPoint(x: tip3D.x + sign * 2.5, y: tip3D.y + 2.0))
+            tipTuft.closeSubpath()
+            ctx.setFillColor(earColor.cgColor)
+            ctx.addPath(tipTuft)
+            ctx.fillPath()
+        }
+
         ctx.restoreGState()
     }
 
@@ -1249,11 +1660,10 @@ enum CatRenderer {
         yawRad: CGFloat,
         pitchRad: CGFloat,
         physics: CatPhysics,
-        eyeTheme: EyeColorTheme,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
-        let eyeColor = eyeTheme.primaryColor
+        let eyeColor = appearance.eyeColor.nsColor
 
         // Eye sits on the front surface of the 3D head sphere at (±17.5, -2.0, +28.0)
         let proj = projectHead3D(x: sign * 17.2, y: -2.0, z: 27.5, yawRad: yawRad, pitchRad: pitchRad)
@@ -1267,7 +1677,7 @@ enum CatRenderer {
         ctx.translateBy(x: proj.pt.x, y: proj.pt.y)
         ctx.scaleBy(x: foreshortenX, y: foreshortenY)
 
-        // Mode 1: Happy closed glowing lime-green curved line eyes (petting head!)
+        // Mode 1: Happy closed glowing curved line eyes (petting head!)
         if physics.isHappyClosedEyes {
             ctx.setStrokeColor(eyeColor.cgColor)
             ctx.setLineWidth(2.6)
@@ -1282,7 +1692,7 @@ enum CatRenderer {
             return
         }
 
-        // Mode 2: Blissful half-squint glowing lime slits (petting back/body!)
+        // Mode 2: Blissful half-squint glowing slits (petting back/body!)
         if physics.isBlissfulSquint {
             ctx.setFillColor(eyeColor.cgColor)
             let slit = CGMutablePath()
@@ -1299,9 +1709,7 @@ enum CatRenderer {
         // Mode 3: Peaceful Sleeping Eyes (idle / late-night nap!)
         if physics.isSleeping {
             let sleepAlpha = min(1.0, (physics.sleepiness - 0.65) / 0.25)
-            let lidStroke = (coat == .siamese)
-                ? siameseCream.withAlphaComponent(0.72 * sleepAlpha)
-                : contourMint.withAlphaComponent(0.82 * sleepAlpha)
+            let lidStroke = appearance.sleepingEyeColor.withAlphaComponent(sleepAlpha * 0.88)
             ctx.setStrokeColor(lidStroke.cgColor)
             ctx.setLineWidth(2.3)
             ctx.setLineCap(.round)
@@ -1332,7 +1740,7 @@ enum CatRenderer {
         ctx.addEllipse(in: eyeRect)
         ctx.clip()
 
-        // Luminous chartreuse iris
+        // Luminous iris
         ctx.setFillColor(eyeColor.cgColor)
         ctx.fill(eyeRect)
 
@@ -1343,7 +1751,7 @@ enum CatRenderer {
         let pScale = physics.pupilScale.value
         let normalW: CGFloat = 5.0 * pScale
         let normalH: CGFloat = 13.5 * min(1.12, pScale)
-        let huntDiameter: CGFloat = 18.8 // huge round boba pupil leaving an electric chartreuse ring!
+        let huntDiameter: CGFloat = 18.8
         let pupilW = normalW + (huntDiameter - normalW) * hunt
         let pupilH = normalH + (huntDiameter - normalH) * hunt
         let pupilRect = CGRect(x: px - pupilW * 0.5, y: py - pupilH * 0.5, width: pupilW, height: pupilH)
@@ -1366,10 +1774,9 @@ enum CatRenderer {
         // Eyelid closure mask (blinks, drowsy sleepiness, AND heavy 0:00–6:00 AM tired upper eyelids!)
         let tiredDroop: CGFloat = tired * 0.36
         let closure = max(physics.effectiveEyeClosure, tiredDroop)
-        let faceMaskColor = (coat == .siamese ? siamesePoint : catBlack)
+        let faceMaskColor = appearance.faceEyelidColor
         if closure > 0.02 {
             let lidY = -ry + (ry * 2.15) * closure
-            // Slight weary slant on outer corner when tired
             let slant: CGFloat = tired * 1.8 * sign
             let lidPath = CGMutablePath()
             lidPath.move(to: CGPoint(x: -rx - 2, y: -ry - 2))
@@ -1384,11 +1791,9 @@ enum CatRenderer {
             ctx.addPath(lidPath)
             ctx.fillPath()
 
-            // Subtle tired upper-lid crease line so heavy droopy eyelids read unmistakably
+            // Subtle tired upper-lid crease line
             if tired > 0.2 && physics.effectiveEyeClosure < 0.55 {
-                let lidRim = (coat == .siamese)
-                    ? siameseCream.withAlphaComponent(0.32 * tired)
-                    : contourMint.withAlphaComponent(0.42 * tired)
+                let lidRim = appearance.sleepingEyeColor.withAlphaComponent(0.45 * tired)
                 ctx.setStrokeColor(lidRim.cgColor)
                 ctx.setLineWidth(1.1)
                 ctx.move(to: CGPoint(x: -rx, y: lidY - slant))
@@ -1402,11 +1807,18 @@ enum CatRenderer {
 
         ctx.restoreGState()
 
+        // Subtle crisp eye rim on very light coats (like White Persian!) so bright eyes still pop cleanly
+        if !appearance.isDarkCoat && appearance.pattern != .colorpoint {
+            ctx.setStrokeColor(appearance.primaryColor.darkened(by: 0.48).withAlphaComponent(0.42).cgColor)
+            ctx.setLineWidth(1.0)
+            ctx.strokeEllipse(in: eyeRect)
+        }
+
         // Late-night (0:00–6:00 AM) tired under-eye bags / dark-circle crescents beneath each eye
         if tired > 0.15 {
-            let bagColor = (coat == .siamese)
-                ? NSColor(calibratedRed: 0.34, green: 0.24, blue: 0.36, alpha: 0.45 * tired)
-                : NSColor(calibratedRed: 0.52, green: 0.48, blue: 0.64, alpha: 0.44 * tired)
+            let bagColor = appearance.isDarkCoat
+                ? NSColor(calibratedRed: 0.52, green: 0.48, blue: 0.64, alpha: 0.44 * tired)
+                : NSColor(calibratedRed: 0.34, green: 0.24, blue: 0.36, alpha: 0.45 * tired)
             ctx.setStrokeColor(bagColor.cgColor)
             ctx.setLineWidth(1.45)
             ctx.setLineCap(.round)
@@ -1426,11 +1838,11 @@ enum CatRenderer {
         yawRad: CGFloat,
         pitchRad: CGFloat,
         physics: CatPhysics,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         let wiggle = sin(physics.time * 4.5) * (max(physics.petHeadIntensity, physics.petBodyIntensity) * 1.2)
         ctx.saveGState()
-        let wColor = (coat == .siamese) ? siameseWhisker : whiskerColor.withAlphaComponent(0.68)
+        let wColor = appearance.whiskerColor
         ctx.setStrokeColor(wColor.cgColor)
         ctx.setLineWidth(1.0)
         ctx.setLineCap(.round)
@@ -1463,7 +1875,7 @@ enum CatRenderer {
         seatY: CGFloat,
         breath: CGFloat,
         physics: CatPhysics,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         let lPos = physics.leftPaw.point
         let rPos = physics.rightPaw.point
@@ -1476,7 +1888,7 @@ enum CatRenderer {
 
         // Left arm
         if lDist < 6.0 && !physics.leftPawOnMouse && !physics.leftPawOnTrackpad && !physics.leftPawTyping {
-            drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - 18, y: seatY - 30), bottom: CGPoint(x: seatX - 16, y: seatY + 12), isLeft: true, coat: coat)
+            drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - 18, y: seatY - 30), bottom: CGPoint(x: seatX - 16, y: seatY + 12), isLeft: true, appearance: appearance)
         } else {
             let mid = CGPoint(
                 x: (leftShoulder.x + lPos.x) * 0.5 - (physics.leftPawOnMouse ? 8 : 4),
@@ -1487,17 +1899,17 @@ enum CatRenderer {
                 start: leftShoulder,
                 control: mid,
                 end: lPos,
-                startWidth: 19.0,
+                startWidth: 19.0 + appearance.furLength * 3.0,
                 endWidth: 13.5,
                 outlineOnLeftSide: false,
                 outlineAlpha: 0.78,
-                coat: coat
+                appearance: appearance
             )
         }
 
         // Right arm
         if rDist < 6.0 && !physics.rightPawTyping {
-            drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + 18, y: seatY - 30), bottom: CGPoint(x: seatX + 16, y: seatY + 12), isLeft: false, coat: coat)
+            drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + 18, y: seatY - 30), bottom: CGPoint(x: seatX + 16, y: seatY + 12), isLeft: false, appearance: appearance)
         } else {
             let mid = CGPoint(
                 x: (rightShoulder.x + rPos.x) * 0.5 + 4,
@@ -1508,22 +1920,21 @@ enum CatRenderer {
                 start: rightShoulder,
                 control: mid,
                 end: rPos,
-                startWidth: 19.0,
+                startWidth: 19.0 + appearance.furLength * 3.0,
                 endWidth: 13.5,
                 outlineOnLeftSide: true,
                 outlineAlpha: 0.78,
-                coat: coat
+                appearance: appearance
             )
         }
     }
 
-    /// Signature tucked sitting front legs (black with mint lines OR Siamese cream-to-chocolate socks!)
-    private static func drawIdleFrontLeg(in ctx: CGContext, top: CGPoint, bottom: CGPoint, isLeft: Bool, coat: CatCoatTheme) {
+    /// Signature tucked sitting front legs (adapts to Colorpoint socks, Tuxedo mittens, or Solid/Tabby/Calico!)
+    private static func drawIdleFrontLeg(in ctx: CGContext, top: CGPoint, bottom: CGPoint, isLeft: Bool, appearance: CatAppearance) {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
         ctx.saveGState()
 
-        if coat == .siamese {
-            // Creamy upper leg dipping smoothly into adorable seal-point chocolate socks at the bottom!
+        if appearance.pattern == .colorpoint {
             let legRect = CGRect(x: bottom.x - 7.5, y: top.y, width: 15.0, height: bottom.y - top.y + 1.0)
             let legPath = CGPath(roundedRect: legRect, cornerWidth: 6.5, cornerHeight: 6.5, transform: nil)
             ctx.saveGState()
@@ -1531,9 +1942,9 @@ enum CatRenderer {
             ctx.clip()
             let cs = CGColorSpaceCreateDeviceRGB()
             let colors = [
-                siameseCream.withAlphaComponent(0.0).cgColor,
-                siameseMocha.withAlphaComponent(0.75).cgColor,
-                siamesePoint.cgColor
+                appearance.primaryColor.nsColor.withAlphaComponent(0.0).cgColor,
+                appearance.tertiaryColor.nsColor.withAlphaComponent(0.75).cgColor,
+                appearance.secondaryColor.nsColor.cgColor
             ] as CFArray
             if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.05, 0.52, 0.85]) {
                 ctx.drawLinearGradient(
@@ -1544,9 +1955,13 @@ enum CatRenderer {
                 )
             }
             ctx.restoreGState()
+        } else if appearance.pattern == .tuxedo {
+            // Cute tuxedo little white mittens at bottom of resting legs
+            ctx.setFillColor(appearance.secondaryColor.cgColor)
+            ctx.fillEllipse(in: CGRect(x: bottom.x - 7.2, y: bottom.y - 11.0, width: 14.4, height: 11.5))
         }
 
-        let lineColor = (coat == .siamese) ? siameseOutline.withAlphaComponent(0.62) : contourMint
+        let lineColor = appearance.limbSeparationColor
         ctx.setStrokeColor(lineColor.cgColor)
         ctx.setLineWidth(1.45)
         ctx.setLineCap(.round)
@@ -1567,7 +1982,7 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    /// Smooth tapered limb + plump rounded paw (matte black OR Siamese cream-to-espresso chocolate socks!)
+    /// Smooth tapered limb + plump rounded paw (adapts to every fur pattern & coat brightness!)
     private static func drawLimb(
         in ctx: CGContext,
         start: CGPoint,
@@ -1577,7 +1992,7 @@ enum CatRenderer {
         endWidth: CGFloat,
         outlineOnLeftSide: Bool,
         outlineAlpha: CGFloat,
-        coat: CatCoatTheme
+        appearance: CatAppearance
     ) {
         let steps = 14
         var leftEdge: [CGPoint] = []
@@ -1605,35 +2020,55 @@ enum CatRenderer {
         let pawRect = CGRect(x: end.x - pawR, y: end.y - pawR * 0.85, width: pawR * 2, height: pawR * 1.7)
 
         ctx.saveGState()
-        if coat == .classicBlack {
-            ctx.setFillColor(catBlack.cgColor)
-            ctx.addPath(limbPath)
-            ctx.fillPath()
-            ctx.fillEllipse(in: pawRect)
-        } else {
-            // Siamese chocolate-dipped socks gradient along the limb!
-            // Starts transparent at shoulder (0.0) so it melts 100% seamlessly into the creamy chest!
+        if appearance.pattern == .colorpoint {
+            // Colorpoint dipped socks gradient along the limb!
             ctx.saveGState()
             ctx.addPath(limbPath)
             ctx.clip()
             let cs = CGColorSpaceCreateDeviceRGB()
             let colors = [
-                siameseCream.withAlphaComponent(0.0).cgColor,
-                siameseCream.cgColor,
-                siameseMocha.cgColor,
-                siamesePoint.cgColor
+                appearance.primaryColor.nsColor.withAlphaComponent(0.0).cgColor,
+                appearance.primaryColor.cgColor,
+                appearance.tertiaryColor.cgColor,
+                appearance.secondaryColor.cgColor
             ] as CFArray
             if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.0, 0.16, 0.48, 0.78]) {
                 ctx.drawLinearGradient(grad, start: start, end: end, options: [.drawsAfterEndLocation])
             }
             ctx.restoreGState()
-
-            // Solid rich espresso-chocolate rounded paw tip (no winding-rule overlap artifacts!)
-            ctx.setFillColor(siamesePoint.cgColor)
+            ctx.setFillColor(appearance.secondaryColor.cgColor)
             ctx.fillEllipse(in: pawRect)
+        } else if appearance.pattern == .tuxedo {
+            ctx.setFillColor(appearance.primaryColor.cgColor)
+            ctx.addPath(limbPath)
+            ctx.fillPath()
+            // Crisp tuxedo white paw mittens!
+            ctx.setFillColor(appearance.secondaryColor.cgColor)
+            ctx.fillEllipse(in: pawRect)
+        } else {
+            ctx.setFillColor(appearance.primaryColor.cgColor)
+            ctx.addPath(limbPath)
+            ctx.fillPath()
+            ctx.fillEllipse(in: pawRect)
+            // Subtle tabby wrist bands
+            if appearance.pattern == .tabby {
+                ctx.saveGState()
+                ctx.addPath(limbPath)
+                ctx.clip()
+                ctx.setStrokeColor(appearance.secondaryColor.nsColor.withAlphaComponent(0.75).cgColor)
+                ctx.setLineWidth(2.6)
+                for idx in [5, 9] {
+                    ctx.move(to: leftEdge[idx])
+                    ctx.addLine(to: rightEdge[idx])
+                }
+                ctx.strokePath()
+                ctx.restoreGState()
+            }
+        }
 
-            // Clean outer edge outline on Siamese arm (fading in below shoulder) so it reads crisply over light backgrounds
-            ctx.setStrokeColor(siameseOutline.withAlphaComponent(0.72).cgColor)
+        // Clean outer edge outline on light/medium coats so the arm reads crisply over light backgrounds
+        if let outline = appearance.silhouetteOutlineColor {
+            ctx.setStrokeColor(outline.withAlphaComponent(0.72).cgColor)
             ctx.setLineWidth(1.25)
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
@@ -1648,9 +2083,7 @@ enum CatRenderer {
         // Crisp separation stroke along upper-to-mid arm where it crosses the torso
         let highlightEdge = outlineOnLeftSide ? leftEdge : rightEdge
         if highlightEdge.count > 6 {
-            let strokeColor = (coat == .siamese)
-                ? siameseOutline.withAlphaComponent(outlineAlpha * 0.78)
-                : contourMint.withAlphaComponent(outlineAlpha * 0.9)
+            let strokeColor = appearance.limbSeparationColor.withAlphaComponent(outlineAlpha * 0.88)
             ctx.setStrokeColor(strokeColor.cgColor)
             ctx.setLineWidth(1.35)
             ctx.setLineCap(.round)
@@ -1736,7 +2169,7 @@ enum CatRenderer {
 
     // MARK: - Subtle Petting Sparkles & Sleep Z
 
-    private static func drawSparkles(in ctx: CGContext, physics: CatPhysics, eyeTheme: EyeColorTheme) {
+    private static func drawSparkles(in ctx: CGContext, physics: CatPhysics, accentColor: NSColor) {
         for sp in physics.sparkles {
             let p = sp.age / sp.lifetime
             let alpha = sin(min(1.0, p) * .pi)
@@ -1748,7 +2181,7 @@ enum CatRenderer {
                 let label = sp.isBigSleepZ ? "Z" : "z"
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: baseSize + p * 3.5, weight: .bold),
-                    .foregroundColor: eyeTheme.primaryColor
+                    .foregroundColor: accentColor
                 ]
                 NSGraphicsContext.saveGraphicsState()
                 NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
@@ -1756,10 +2189,10 @@ enum CatRenderer {
                     .draw(at: CGPoint(x: sp.position.x + swayX, y: sp.position.y))
                 NSGraphicsContext.restoreGraphicsState()
             } else {
-                // Tiny glowing chartreuse 4-point star
+                // Tiny glowing 4-point star
                 let r: CGFloat = 3.5 + p * 1.5
                 ctx.translateBy(x: sp.position.x, y: sp.position.y)
-                ctx.setFillColor(eyeTheme.primaryColor.cgColor)
+                ctx.setFillColor(accentColor.cgColor)
                 let star = CGMutablePath()
                 star.move(to: CGPoint(x: 0, y: -r))
                 star.addQuadCurve(to: CGPoint(x: r, y: 0), control: CGPoint(x: 0.8, y: -0.8))
@@ -1816,6 +2249,16 @@ enum CatRenderer {
         return CGPoint(
             x: mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
             y: mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
+        )
+    }
+
+    private static func cubicPoint(_ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint, t: CGFloat) -> CGPoint {
+        let mt = 1 - t
+        let mt2 = mt * mt
+        let t2 = t * t
+        return CGPoint(
+            x: mt2 * mt * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t2 * t * p3.x,
+            y: mt2 * mt * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t2 * t * p3.y
         )
     }
 
