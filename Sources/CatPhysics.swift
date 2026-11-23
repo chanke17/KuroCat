@@ -40,6 +40,87 @@ enum EyeColorTheme: String, CaseIterable {
     }
 }
 
+enum TieColorTheme: String, CaseIterable {
+    case cyan     = "青色 (Cyan)"
+    case crimson  = "苏格兰红 (Crimson)"
+    case navy     = "学院藏蓝 (Navy)"
+    case emerald  = "森系墨绿 (Emerald)"
+    case amber    = "暖阳姜黄 (Amber)"
+    case lavender = "香芋浅紫 (Lavender)"
+
+    struct Palette {
+        let base: NSColor
+        let dark: NSColor
+        let light: NSColor
+        let accent: NSColor
+    }
+
+    var palette: Palette {
+        switch self {
+        case .cyan:
+            return Palette(
+                base:   NSColor(calibratedRed: 0.34, green: 0.85, blue: 0.90, alpha: 1.0), // airy bright cyan
+                dark:   NSColor(calibratedRed: 0.14, green: 0.56, blue: 0.64, alpha: 1.0),
+                light:  NSColor(calibratedRed: 0.88, green: 0.99, blue: 1.00, alpha: 0.96),
+                accent: NSColor(calibratedRed: 0.10, green: 0.40, blue: 0.48, alpha: 0.85)
+            )
+        case .crimson:
+            return Palette(
+                base:   NSColor(calibratedRed: 0.90, green: 0.35, blue: 0.39, alpha: 1.0),
+                dark:   NSColor(calibratedRed: 0.60, green: 0.18, blue: 0.22, alpha: 1.0),
+                light:  NSColor(calibratedRed: 1.00, green: 0.92, blue: 0.82, alpha: 0.96),
+                accent: NSColor(calibratedRed: 0.22, green: 0.48, blue: 0.38, alpha: 0.85)
+            )
+        case .navy:
+            return Palette(
+                base:   NSColor(calibratedRed: 0.32, green: 0.52, blue: 0.78, alpha: 1.0),
+                dark:   NSColor(calibratedRed: 0.18, green: 0.32, blue: 0.54, alpha: 1.0),
+                light:  NSColor(calibratedRed: 0.88, green: 0.94, blue: 1.00, alpha: 0.96),
+                accent: NSColor(calibratedRed: 0.95, green: 0.79, blue: 0.36, alpha: 0.90)
+            )
+        case .emerald:
+            return Palette(
+                base:   NSColor(calibratedRed: 0.28, green: 0.72, blue: 0.56, alpha: 1.0),
+                dark:   NSColor(calibratedRed: 0.14, green: 0.46, blue: 0.35, alpha: 1.0),
+                light:  NSColor(calibratedRed: 0.86, green: 0.98, blue: 0.93, alpha: 0.96),
+                accent: NSColor(calibratedRed: 0.94, green: 0.82, blue: 0.38, alpha: 0.90)
+            )
+        case .amber:
+            return Palette(
+                base:   NSColor(calibratedRed: 0.96, green: 0.74, blue: 0.32, alpha: 1.0),
+                dark:   NSColor(calibratedRed: 0.68, green: 0.46, blue: 0.16, alpha: 1.0),
+                light:  NSColor(calibratedRed: 1.00, green: 0.96, blue: 0.84, alpha: 0.96),
+                accent: NSColor(calibratedRed: 0.40, green: 0.26, blue: 0.14, alpha: 0.82)
+            )
+        case .lavender:
+            return Palette(
+                base:   NSColor(calibratedRed: 0.72, green: 0.61, blue: 0.92, alpha: 1.0),
+                dark:   NSColor(calibratedRed: 0.48, green: 0.36, blue: 0.70, alpha: 1.0),
+                light:  NSColor(calibratedRed: 0.96, green: 0.93, blue: 1.00, alpha: 0.96),
+                accent: NSColor(calibratedRed: 0.34, green: 0.24, blue: 0.54, alpha: 0.84)
+            )
+        }
+    }
+}
+
+enum TieStyle: String, CaseIterable {
+    case necktie = "经典领带 (Necktie)"
+    case bowTie  = "学院领结 (Bow Tie)"
+}
+
+enum TiePattern: String, CaseIterable {
+    case scottishGrid   = "苏格兰格纹 (Scottish Tartan)"
+    case diagonalStripe = "学院斜条纹 (Diagonal Stripe)"
+    case polkaDot       = "经典波点 (Polka Dot)"
+    case solid          = "简约纯色 (Solid)"
+}
+
+enum TiredEyesMode: String, CaseIterable {
+    case autoLateNight = "自动 (0:00–6:00 熬夜眼)"
+    case alwaysOn      = "始终开启疲惫眼"
+    case off           = "关闭"
+}
+
 final class CatSettings {
     static let shared = CatSettings()
 
@@ -70,6 +151,27 @@ final class CatSettings {
     var eyeTheme: EyeColorTheme {
         didSet { UserDefaults.standard.set(eyeTheme.rawValue, forKey: "KuroCat.EyeTheme") }
     }
+    var showTie: Bool {
+        didSet { UserDefaults.standard.set(showTie, forKey: "KuroCat.ShowTie") }
+    }
+    var tieStyle: TieStyle {
+        didSet { UserDefaults.standard.set(tieStyle.rawValue, forKey: "KuroCat.TieStyle") }
+    }
+    var tieColor: TieColorTheme {
+        didSet { UserDefaults.standard.set(tieColor.rawValue, forKey: "KuroCat.TieColor") }
+    }
+    var tiePattern: TiePattern {
+        didSet { UserDefaults.standard.set(tiePattern.rawValue, forKey: "KuroCat.TiePattern") }
+    }
+    var tiredEyesMode: TiredEyesMode {
+        didSet { UserDefaults.standard.set(tiredEyesMode.rawValue, forKey: "KuroCat.TiredEyesMode") }
+    }
+    var deskSetupMode: DeskSetupMode {
+        didSet { UserDefaults.standard.set(deskSetupMode.rawValue, forKey: "KuroCat.DeskSetupMode") }
+    }
+    var macBookColorOption: MacBookColorOption {
+        didSet { UserDefaults.standard.set(macBookColorOption.rawValue, forKey: "KuroCat.MacBookColorOption") }
+    }
 
     private init() {
         let d = UserDefaults.standard
@@ -83,6 +185,13 @@ final class CatSettings {
         coatTheme = CatCoatTheme(rawValue: d.string(forKey: "KuroCat.CoatTheme") ?? "") ?? .classicBlack
         keyboardTheme = KeyboardTheme(rawValue: d.string(forKey: "KuroCat.KeyboardTheme") ?? "") ?? .classicMilk
         eyeTheme = EyeColorTheme(rawValue: d.string(forKey: "KuroCat.EyeTheme") ?? "") ?? .neonChartreuse
+        showTie = d.object(forKey: "KuroCat.ShowTie") as? Bool ?? false
+        tieStyle = TieStyle(rawValue: d.string(forKey: "KuroCat.TieStyle") ?? "") ?? .necktie
+        tieColor = TieColorTheme(rawValue: d.string(forKey: "KuroCat.TieColor") ?? "") ?? .cyan
+        tiePattern = TiePattern(rawValue: d.string(forKey: "KuroCat.TiePattern") ?? "") ?? .scottishGrid
+        tiredEyesMode = TiredEyesMode(rawValue: d.string(forKey: "KuroCat.TiredEyesMode") ?? "") ?? .autoLateNight
+        deskSetupMode = DeskSetupMode(rawValue: d.string(forKey: "KuroCat.DeskSetupMode") ?? "") ?? .auto
+        macBookColorOption = MacBookColorOption(rawValue: d.string(forKey: "KuroCat.MacBookColorOption") ?? "") ?? .auto
     }
 }
 
@@ -143,8 +252,9 @@ struct PurrSparkle {
     var position: CGPoint
     var velocity: CGPoint
     var age: CGFloat = 0
-    let lifetime: CGFloat = 0.9
+    let lifetime: CGFloat = 1.45
     let isSleepZ: Bool
+    var isBigSleepZ: Bool = false
 }
 
 struct ScriptedFrameInput {
@@ -172,6 +282,7 @@ final class CatPhysics {
     static let rightPawRest = CGPoint(x: 204, y: 235)
     static let hindFootRest = CGPoint(x: 214, y: 234)
     static let mouseBaseCenter = CGPoint(x: 78, y: 258)
+    static let trackpadBaseCenter = CGPoint(x: 193, y: 234)
 
     // Springs
     var leftPaw = Spring2D(leftPawRest)
@@ -180,6 +291,7 @@ final class CatPhysics {
     var hindFootActive = Spring1D(0) // 0 = tucked, 1 = kicking 3rd key
 
     var bodyShiftX = Spring1D(0)
+    var bodyShiftY = Spring1D(0)     // negative = scoot back for trackpad, positive = lean forward when typing!
     var bodyTilt = Spring1D(0)       // radians
     var bodySquash = Spring1D(1.0)
     var headTilt = Spring1D(0)       // radians (roll)
@@ -198,6 +310,7 @@ final class CatPhysics {
 
     // Paw mode flags (for crisp outline & posture rendering)
     private(set) var leftPawOnMouse = false
+    private(set) var leftPawOnTrackpad = false
     private(set) var leftPawTyping = false
     private(set) var rightPawTyping = false
 
@@ -212,6 +325,7 @@ final class CatPhysics {
     // Time & blink
     private(set) var time: CGFloat = 0
     private(set) var tailPhase: CGFloat = 0
+    private(set) var breathPhase: CGFloat = 0
     private var nextBlinkTime: CGFloat = 3.2
     private var blinkProgress: CGFloat = 0 // 0 = open, 1 = closed
     private var isBlinking = false
@@ -227,19 +341,43 @@ final class CatPhysics {
     private var petCursorCanvasPos: CGPoint = .zero
     private var petSparkleCooldown: CGFloat = 0
 
-    // Sleepy idle state
-    private(set) var sleepiness: CGFloat = 0 // 0 = awake, 1 = napping
+    // Sleepy idle & late-night tired state
+    private(set) var sleepiness: CGFloat = 0 // 0 = awake, 1 = deep sleep
     private var sleepZCooldown: CGFloat = 0
+    private var sleepZToggle = false
+    private(set) var isLateNightHours: Bool = false
+    private(set) var tiredness: CGFloat = 0  // 0 = fresh, 1 = 0:00–6:00 AM tired eyes
+    private var lastClockCheckTime: CFTimeInterval = -100
 
     // Recent key memory so fast single taps linger visibly (~140ms)
     private var recentLeftKey: (key: PhysicalKey, time: CFTimeInterval)?
     private var recentRightKey: (key: PhysicalKey, time: CFTimeInterval)?
     private var lastTypedPoint: CGPoint?
 
+    var isSleeping: Bool {
+        sleepiness > 0.65
+    }
+
+    var isDrowsy: Bool {
+        sleepiness > 0.22 && !isSleeping
+    }
+
+    /// Active tiredness level (suppressed slightly during high-alert hunting)
+    var effectiveTiredness: CGFloat {
+        let hunt = max(0, min(1, huntIntensity.value))
+        return max(0, min(1, tiredness * (1.0 - hunt * 0.78)))
+    }
+
+    /// Current breathing vertical offset (slower & deeper when sleeping)
+    var currentBreathOffset: CGFloat {
+        let amp: CGFloat = 1.6 + sleepiness * 1.15
+        return sin(breathPhase) * amp
+    }
+
     // Computed eye closure (0 = wide open, 0.55 = half squint, 1 = fully closed)
     var effectiveEyeClosure: CGFloat {
         let petClose = max(petHeadIntensity * 1.0, petBodyIntensity * 0.62)
-        let sleepClose = sleepiness * 0.92
+        let sleepClose = sleepiness * 1.0
         return min(1.0, max(blinkProgress, max(petClose, sleepClose)))
     }
 
@@ -412,26 +550,60 @@ final class CatPhysics {
             }
         }
 
-        // 2. Sleepy idle detection
+        // 2. Late-night clock check (0:00–6:00 AM local time) & Tiredness
+        if now - lastClockCheckTime > 5.0 {
+            lastClockCheckTime = now
+            let hour = Calendar.current.component(.hour, from: Date())
+            isLateNightHours = (hour >= 0 && hour < 6)
+        }
+        let targetTiredness: CGFloat
+        switch CatSettings.shared.tiredEyesMode {
+        case .autoLateNight: targetTiredness = isLateNightHours ? 1.0 : 0.0
+        case .alwaysOn:      targetTiredness = 1.0
+        case .off:           targetTiredness = 0.0
+        }
+        tiredness += (targetTiredness - tiredness) * min(1.0, dt * 2.5)
+
+        // 2a. Sleepy idle & late-night detection (combines local activity + macOS system idle time)
         let lastAnyActivity = max(curLastKeyTime, max(curLastMouseMove, lastPetTime))
-        let idleSeconds = lastAnyActivity > 0 ? (now - lastAnyActivity) : 0
-        if activeKeys.isEmpty && idleSeconds > 45 {
-            let targetSleep = min(1.0, CGFloat((idleSeconds - 45) / 35.0))
-            sleepiness += (targetSleep - sleepiness) * dt * 1.5
-            if sleepiness > 0.8 {
+        let localIdle: CFTimeInterval = lastAnyActivity > 0 ? (now - lastAnyActivity) : .greatestFiniteMagnitude
+        let systemIdle: CFTimeInterval
+        if scripted == nil, let anyEvent = CGEventType(rawValue: ~0) {
+            let sysSec = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyEvent)
+            systemIdle = sysSec.isFinite && sysSec >= 0 ? sysSec : localIdle
+        } else {
+            systemIdle = localIdle
+        }
+        let idleSeconds = min(localIdle, systemIdle)
+        let idleThreshold: CFTimeInterval = isLateNightHours ? 18.0 : 45.0
+        let sleepRampDuration: CFTimeInterval = isLateNightHours ? 20.0 : 30.0
+
+        if activeKeys.isEmpty && idleSeconds.isFinite && idleSeconds > idleThreshold {
+            let targetSleep = min(1.0, CGFloat((idleSeconds - idleThreshold) / sleepRampDuration))
+            sleepiness += (targetSleep - sleepiness) * min(1.0, dt * 1.6)
+            if sleepiness > 0.65 {
                 sleepZCooldown -= dt
                 if sleepZCooldown <= 0 {
-                    sleepZCooldown = 2.6
+                    sleepZCooldown = sleepZToggle ? 1.65 : 2.25
+                    sleepZToggle.toggle()
                     sparkles.append(PurrSparkle(
-                        position: CGPoint(x: CatPhysics.seatAnchor.x + 42, y: 100),
-                        velocity: CGPoint(x: 12, y: -18),
-                        isSleepZ: true
+                        position: CGPoint(
+                            x: CatPhysics.seatAnchor.x + 36 + (sleepZToggle ? 5 : 0),
+                            y: 102 + sleepiness * 8
+                        ),
+                        velocity: CGPoint(x: sleepZToggle ? 13 : 9, y: -16),
+                        isSleepZ: true,
+                        isBigSleepZ: sleepZToggle
                     ))
                 }
             }
         } else {
             sleepiness = max(0, sleepiness - dt * 5.0)
         }
+
+        // Smooth breathing phase (slows down into deep rhythmic breathing during sleep)
+        let breathSpeed: CGFloat = 2.1 - sleepiness * 0.95
+        breathPhase += dt * breathSpeed
 
         // 2b. Fast Mouse Movement -> Hunting / Stalking Mode (dilated round boba pupils + low crouch!)
         let mouseSpeed = hypot(curMouseVel.dx, curMouseVel.dy)
@@ -505,24 +677,48 @@ final class CatPhysics {
         mousePressLeft.step(dt: dt, stiffness: 400, damping: 24)
         mousePressRight.step(dt: dt, stiffness: 400, damping: 24)
 
+        let hw = HardwareMonitor.shared
+        let showExtMouse = hw.shouldShowExternalMouse
+        let showLaptop = hw.shouldShowLaptop
+
+        let mouseAnchorX = CatPhysics.mouseBaseCenter.x - (showLaptop ? 12.0 : 0.0)
         let liveMouseCenter = CGPoint(
-            x: CatPhysics.mouseBaseCenter.x + mouseOffset.point.x,
+            x: mouseAnchorX + mouseOffset.point.x,
             y: CatPhysics.mouseBaseCenter.y + mouseOffset.point.y
         )
 
-        // Left paw target
+        // Left paw target (viewer-left paw = cat's right hand)
+        let useExternalMouseNow: Bool
+        if showLaptop {
+            // On a MacBook, auto-switch between built-in Trackpad and external Mouse based on live pointer source!
+            useExternalMouseNow = showExtMouse && (engine.activePointerSource == .external)
+        } else {
+            useExternalMouseNow = showExtMouse
+        }
+
         if let lk = leftKey {
             leftPaw.target = KeyboardLayout.canvasPoint(for: lk)
             leftPawTyping = true
             leftPawOnMouse = false
-        } else if mouseRecent && sleepiness < 0.3 {
+            leftPawOnTrackpad = false
+        } else if mouseRecent && sleepiness < 0.3 && useExternalMouseNow {
             leftPaw.target = CGPoint(x: liveMouseCenter.x + 2, y: liveMouseCenter.y - 3)
             leftPawTyping = false
             leftPawOnMouse = true
+            leftPawOnTrackpad = false
+        } else if mouseRecent && sleepiness < 0.3 && showLaptop {
+            leftPaw.target = CGPoint(
+                x: CatPhysics.trackpadBaseCenter.x + mouseOffset.point.x * 1.15,
+                y: CatPhysics.trackpadBaseCenter.y + mouseOffset.point.y * 0.75
+            )
+            leftPawTyping = false
+            leftPawOnMouse = false
+            leftPawOnTrackpad = true
         } else {
             leftPaw.target = CatPhysics.leftPawRest
             leftPawTyping = false
             leftPawOnMouse = false
+            leftPawOnTrackpad = false
         }
 
         // Right paw target
@@ -548,30 +744,44 @@ final class CatPhysics {
         hindFoot.step(dt: dt, stiffness: 320, damping: 22)
         hindFootActive.step(dt: dt, stiffness: 260, damping: 22)
 
-        // 4. Expressive body lean, squash, head & ears
+        // 4. Expressive body lean, scoot-back for trackpad, lean-forward for typing, squash, head & ears
         var targetShiftX: CGFloat = 0
+        var targetShiftY: CGFloat = 0
         var targetBodyTilt: CGFloat = 0
         if leftPawOnMouse && !rightPawTyping {
             targetShiftX = -10
             targetBodyTilt = -0.075
         } else if leftPawOnMouse && rightPawTyping {
             targetShiftX = -3
+            targetShiftY = 4.0
             targetBodyTilt = (rightPaw.point.x - 196) * 0.0008
+        } else if leftPawOnTrackpad && !rightPawTyping {
+            // Walk/scoot back a little so the cat's paw sits comfortably & visibly on the trackpad!
+            targetShiftX = 2.0
+            targetShiftY = -12.5
+            targetBodyTilt = 0.03
         } else if leftPawTyping || rightPawTyping {
+            // Lean/lie forward a bit over the keyboard while typing!
             let avgX = ((leftPawTyping ? leftPaw.point.x : 184) + (rightPawTyping ? rightPaw.point.x : 184)) * 0.5
             targetShiftX = (avgX - 184) * 0.14
+            targetShiftY = 5.5
             targetBodyTilt = (avgX - 184) * 0.0011
         }
         bodyShiftX.target = max(-16, min(16, targetShiftX))
+        bodyShiftY.target = max(-15, min(8, targetShiftY))
         bodyTilt.target = max(-0.12, min(0.12, targetBodyTilt))
-        // Coiled low hunting crouch when chasing a fast-moving mouse!
-        bodySquash.target = 1.0 - hunt * 0.11
+        // Coiled low hunting crouch, forward typing lean, OR cozy settled sleeping posture!
+        let typingSquash: CGFloat = (leftPawTyping || rightPawTyping) ? 0.035 : 0.0
+        bodySquash.target = 1.0 - hunt * 0.11 - sleepiness * 0.085 - typingSquash
 
-        headOffsetY.target = (leftPawTyping || rightPawTyping) ? 3.5 : (sleepiness * 5.0 + hunt * 10.5)
-        earFold.target = max(petHeadIntensity * 0.7, petBodyIntensity * 0.45) + sleepiness * 0.25 - hunt * 0.18
+        headOffsetY.target = (leftPawTyping || rightPawTyping)
+            ? 5.5
+            : (leftPawOnTrackpad ? -1.5 : (sleepiness * 10.5 + hunt * 10.5))
+        earFold.target = max(petHeadIntensity * 0.7, petBodyIntensity * 0.45) + sleepiness * 0.44 - hunt * 0.18
         earTwitch.target = 0
 
         bodyShiftX.step(dt: dt, stiffness: 140, damping: 18)
+        bodyShiftY.step(dt: dt, stiffness: 130, damping: 18)
         bodyTilt.step(dt: dt, stiffness: 140, damping: 18)
         bodySquash.step(dt: dt, stiffness: 280, damping: 18)
         headOffsetY.step(dt: dt, stiffness: 180, damping: 19)
@@ -614,21 +824,25 @@ final class CatPhysics {
         }
 
         // Head turns smoothly in 2.5D (yaw & pitch) — locks on faster during hunting mode!
-        if sleepiness > 0.45 {
+        if sleepiness > 0.35 {
             headYaw.target = 0
-            headPitch.target = 0.45 * sleepiness
+            headPitch.target = 0.56 * sleepiness
         } else {
             headYaw.target = max(-1.0, min(1.0, lookTargetX))
             headPitch.target = max(-1.0, min(1.0, lookTargetY))
         }
-        let headStiff: CGFloat = 88 + hunt * 75
+        let headStiff: CGFloat = 88 + hunt * 75 - sleepiness * 28
         let headDamp: CGFloat = 14.5 + hunt * 4.5
         headYaw.step(dt: dt, stiffness: headStiff, damping: headDamp)
         headPitch.step(dt: dt, stiffness: headStiff, damping: headDamp)
 
-        // Subtle natural head roll coupled to head turning (curious tilt / locked-on hunt!)
+        // Subtle natural head roll coupled to head turning (or cozy cheek-tilt when sleeping!)
         if now - lastPetTime > 0.28 {
-            headTilt.target = bodyTilt.target * 0.45 + headYaw.value * (0.11 + hunt * 0.05) - headYaw.value * headPitch.value * 0.04
+            if sleepiness > 0.35 {
+                headTilt.target = 0.14 * sleepiness
+            } else {
+                headTilt.target = bodyTilt.target * 0.45 + headYaw.value * (0.11 + hunt * 0.05) - headYaw.value * headPitch.value * 0.04
+            }
         }
         headTilt.step(dt: dt, stiffness: 130, damping: 16)
 
@@ -644,14 +858,16 @@ final class CatPhysics {
         }
         pupilScale.step(dt: dt, stiffness: 150, damping: 18)
 
-        // 6. Blinking (cats lock eyes without blinking during hunting mode!)
+        // 6. Blinking (cats lock eyes without blinking during hunting mode; slower blinks when tired!)
         if isBlinking {
             blinkTimer += dt
-            let blinkDuration: CGFloat = 0.14
+            let blinkDuration: CGFloat = 0.14 + effectiveTiredness * 0.08
             if blinkTimer >= blinkDuration {
                 isBlinking = false
                 blinkProgress = 0
-                nextBlinkTime = time + CGFloat.random(in: 2.6...5.6)
+                let minInterval: CGFloat = effectiveTiredness > 0.4 ? 1.9 : 2.6
+                let maxInterval: CGFloat = effectiveTiredness > 0.4 ? 4.2 : 5.6
+                nextBlinkTime = time + CGFloat.random(in: minInterval...maxInterval)
             } else {
                 let p = blinkTimer / blinkDuration
                 blinkProgress = sin(p * .pi)
@@ -661,11 +877,11 @@ final class CatPhysics {
             blinkTimer = 0
         }
 
-        // 7. Tail wag speed reacts organically to energy / petting / hunting tension!
+        // 7. Tail wag speed reacts organically to energy / petting / hunting tension / sleep!
         let kpmBoost = min(2.4, CGFloat(engine.currentKPM) / 160.0)
         let petBoost = max(petHeadIntensity, petBodyIntensity) * 1.4
         let huntBoost = hunt * 2.8
-        let tailSpeed: CGFloat = 1.85 + kpmBoost + petBoost + huntBoost - sleepiness * 1.1
+        let tailSpeed: CGFloat = max(0.35, 1.85 + kpmBoost + petBoost + huntBoost - sleepiness * 1.45)
         tailPhase += dt * tailSpeed
 
         // 8. Update per-keycap glows

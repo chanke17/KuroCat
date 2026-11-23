@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSMenu.popUpContextMenu(menu, with: event, for: self.overlayWindow.catView)
         }
 
+        // Start live hardware peripheral & MacBook color monitor
+        _ = HardwareMonitor.shared
+
         // Wire dual-layer InputEngine -> CatPhysics
         let engine = InputEngine.shared
         engine.onKeyDown = { [weak self] key in
@@ -110,11 +113,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(grantItem)
         }
 
-        // Live stats
-        let statsTitle = "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次"
+        // Live stats & hardware/sleep status
+        let hw = HardwareMonitor.shared
+        let moodSuffix: String
+        if physics.isSleeping {
+            moodSuffix = "  ·  💤 呼呼大睡中"
+        } else if physics.effectiveTiredness > 0.35 {
+            moodSuffix = "  ·  🌙 熬夜困困中"
+        } else {
+            moodSuffix = ""
+        }
+        let statsTitle = "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次\(moodSuffix)"
         let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
         statsItem.isEnabled = false
         menu.addItem(statsItem)
+
+        let hwItem = NSMenuItem(title: "外设: \(hw.hardwareSummary)", action: nil, keyEquivalent: "")
+        hwItem.isEnabled = false
+        menu.addItem(hwItem)
 
         menu.addItem(.separator())
 
@@ -216,6 +232,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let eyeParent = NSMenuItem(title: "瞳色切换", action: nil, keyEquivalent: "")
         eyeParent.submenu = eyeMenu
         menu.addItem(eyeParent)
+
+        // Configurable Necktie / Bow Tie Accessory submenu
+        let tieMenu = NSMenu()
+        let tieToggle = NSMenuItem(title: "佩戴领带 / 领结", action: #selector(toggleShowTie), keyEquivalent: "")
+        tieToggle.target = self
+        tieToggle.state = settings.showTie ? .on : .off
+        tieMenu.addItem(tieToggle)
+        tieMenu.addItem(.separator())
+
+        let tieStyleHeader = NSMenuItem(title: "款式", action: nil, keyEquivalent: "")
+        tieStyleHeader.isEnabled = false
+        tieMenu.addItem(tieStyleHeader)
+        for style in TieStyle.allCases {
+            let item = NSMenuItem(title: style.rawValue, action: #selector(selectTieStyle(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = style.rawValue
+            item.state = (settings.tieStyle == style) ? .on : .off
+            tieMenu.addItem(item)
+        }
+        tieMenu.addItem(.separator())
+
+        let tieColorHeader = NSMenuItem(title: "颜色", action: nil, keyEquivalent: "")
+        tieColorHeader.isEnabled = false
+        tieMenu.addItem(tieColorHeader)
+        for color in TieColorTheme.allCases {
+            let item = NSMenuItem(title: color.rawValue, action: #selector(selectTieColor(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = color.rawValue
+            item.state = (settings.tieColor == color) ? .on : .off
+            tieMenu.addItem(item)
+        }
+        tieMenu.addItem(.separator())
+
+        let tiePatternHeader = NSMenuItem(title: "花纹", action: nil, keyEquivalent: "")
+        tiePatternHeader.isEnabled = false
+        tieMenu.addItem(tiePatternHeader)
+        for pattern in TiePattern.allCases {
+            let item = NSMenuItem(title: pattern.rawValue, action: #selector(selectTiePattern(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = pattern.rawValue
+            item.state = (settings.tiePattern == pattern) ? .on : .off
+            tieMenu.addItem(item)
+        }
+        let tieParent = NSMenuItem(title: "领带 / 领结配饰 👔", action: nil, keyEquivalent: "")
+        tieParent.submenu = tieMenu
+        menu.addItem(tieParent)
+
+        // Desk Peripherals / Apple Laptop submenu
+        let deskMenu = NSMenu()
+        for mode in DeskSetupMode.allCases {
+            let item = NSMenuItem(title: mode.rawValue, action: #selector(selectDeskSetupMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = (settings.deskSetupMode == mode) ? .on : .off
+            deskMenu.addItem(item)
+        }
+        deskMenu.addItem(.separator())
+        let laptopColorHeader = NSMenuItem(
+            title: "Apple 设备配色 (检测到: \(hw.detectedLaptopColor.displayName))",
+            action: nil,
+            keyEquivalent: ""
+        )
+        laptopColorHeader.isEnabled = false
+        deskMenu.addItem(laptopColorHeader)
+        for opt in MacBookColorOption.allCases {
+            if opt == .neoBlush || opt == .imacBlue {
+                deskMenu.addItem(.separator())
+            }
+            let item = NSMenuItem(title: opt.rawValue, action: #selector(selectMacBookColor(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = opt.rawValue
+            item.state = (settings.macBookColorOption == opt) ? .on : .off
+            deskMenu.addItem(item)
+        }
+        let deskParent = NSMenuItem(title: "桌面外设 / 笔记本 💻", action: nil, keyEquivalent: "")
+        deskParent.submenu = deskMenu
+        menu.addItem(deskParent)
+
+        // Late-Night Tired Eyes submenu
+        let tiredMenu = NSMenu()
+        for mode in TiredEyesMode.allCases {
+            let item = NSMenuItem(title: mode.rawValue, action: #selector(selectTiredEyesMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = (settings.tiredEyesMode == mode) ? .on : .off
+            tiredMenu.addItem(item)
+        }
+        let tiredParent = NSMenuItem(title: "熬夜疲惫眼 🌙", action: nil, keyEquivalent: "")
+        tiredParent.submenu = tiredMenu
+        menu.addItem(tiredParent)
 
         menu.addItem(.separator())
 
@@ -352,6 +458,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let theme = EyeColorTheme(rawValue: raw) else { return }
         CatSettings.shared.eyeTheme = theme
+    }
+
+    @objc private func toggleShowTie() {
+        CatSettings.shared.showTie.toggle()
+    }
+
+    @objc private func selectTieStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let style = TieStyle(rawValue: raw) else { return }
+        CatSettings.shared.tieStyle = style
+        CatSettings.shared.showTie = true
+    }
+
+    @objc private func selectTieColor(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let color = TieColorTheme(rawValue: raw) else { return }
+        CatSettings.shared.tieColor = color
+        CatSettings.shared.showTie = true
+    }
+
+    @objc private func selectTiePattern(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let pattern = TiePattern(rawValue: raw) else { return }
+        CatSettings.shared.tiePattern = pattern
+        CatSettings.shared.showTie = true
+    }
+
+    @objc private func selectDeskSetupMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = DeskSetupMode(rawValue: raw) else { return }
+        CatSettings.shared.deskSetupMode = mode
+    }
+
+    @objc private func selectMacBookColor(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let opt = MacBookColorOption(rawValue: raw) else { return }
+        CatSettings.shared.macBookColorOption = opt
+    }
+
+    @objc private func selectTiredEyesMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = TiredEyesMode(rawValue: raw) else { return }
+        CatSettings.shared.tiredEyesMode = mode
     }
 
     @objc private func resetPosition() {

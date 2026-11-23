@@ -31,8 +31,9 @@ enum CatRenderer {
         }
 
         let cx = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
-        let breath = sin(physics.time * 2.1) * 1.6
-        let headCenter = CGPoint(x: cx + physics.bodyTilt.value * 42, y: 124 + physics.headOffsetY.value + breath)
+        let shiftY = physics.bodyShiftY.value
+        let breath = physics.currentBreathOffset
+        let headCenter = CGPoint(x: cx + physics.bodyTilt.value * 42, y: 124 + shiftY + physics.headOffsetY.value + breath)
 
         // Head hit ellipse (generous for cozy petting)
         let hdx = (p.x - headCenter.x) / 48.0
@@ -43,15 +44,18 @@ enum CatRenderer {
 
         // Torso + keyboard area hit check
         let bdx = (p.x - cx) / 58.0
-        let bdy = (p.y - 196.0) / 56.0
+        let bdy = (p.y - (196.0 + shiftY)) / 56.0
         if bdx * bdx + bdy * bdy <= 1.0 {
             return .body
         }
 
-        // Mini keyboard & mouse area (allows dragging by grabbing keyboard too)
-        let kbRect = CGRect(x: 58, y: 232, width: 236, height: 64)
-        if kbRect.contains(p) {
-            return .body
+        // Desk peripheral area (only active when keyboard, laptop, or mouse is shown)
+        let hw = HardwareMonitor.shared
+        if hw.hasAnyKeyboardSurface || hw.shouldShowExternalMouse {
+            let kbRect = CGRect(x: 58, y: 232, width: 242, height: 70)
+            if kbRect.contains(p) {
+                return .body
+            }
         }
 
         return .none
@@ -64,16 +68,29 @@ enum CatRenderer {
         ctx.setShouldAntialias(true)
 
         let settings = CatSettings.shared
+        let hw = HardwareMonitor.shared
         let coat = settings.coatTheme
-        let breath = sin(physics.time * 2.1) * 1.6
+        let breath = physics.currentBreathOffset
+        let shiftY = physics.bodyShiftY.value
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
-        let seatY = CatPhysics.seatAnchor.y
+        let seatY = CatPhysics.seatAnchor.y + shiftY
 
-        // 1. Mini White Mouse (left of keyboard)
-        drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
+        // 1. External Mouse (only drawn when actually connected or forced in settings)
+        if hw.shouldShowExternalMouse {
+            drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
+        }
 
-        // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
-        drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+        // 2. Desk Keyboard OR Apple Laptop C-Side (matched to MacBook enclosure color)
+        if hw.shouldShowLaptop {
+            drawLaptopCSide(
+                in: ctx,
+                physics: physics,
+                color: hw.effectiveLaptopColor,
+                eyeTheme: settings.eyeTheme
+            )
+        } else if hw.shouldShowExternalKeyboard {
+            drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+        }
 
         // 3. Cat Tail (behind body)
         drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
@@ -81,7 +98,7 @@ enum CatRenderer {
         // 4. 3D-Projected Ears (behind crown silhouette so Siamese seal-point ears emerge cleanly from cream skull!)
         let headCenter = CGPoint(
             x: seatX + physics.bodyTilt.value * 36 + physics.headYaw.value * 7.5,
-            y: 126 + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1
+            y: 126 + shiftY + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1
         )
         drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat)
 
@@ -96,26 +113,46 @@ enum CatRenderer {
             coat: coat
         )
 
+        // 5b. Configurable Necktie / Bow Tie Accessory (drawn on chest, behind front paws)
+        if settings.showTie {
+            drawTieAccessory(
+                in: ctx,
+                seatX: seatX,
+                headCenter: headCenter,
+                breath: breath,
+                physics: physics,
+                style: settings.tieStyle,
+                colorTheme: settings.tieColor,
+                pattern: settings.tiePattern,
+                coat: coat
+            )
+        }
+
         // 6. Hind Foot (3rd simultaneous key easter egg!)
         if physics.hindFootActive.value > 0.03 {
             drawHindFoot(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
         }
 
-        // 7. 2.5D Turning Head Features: Luminous Eyes & Whiskers
+        // 7. 2.5D Turning Head Features: Luminous Eyes (with Sleep / Tired states) & Whiskers
         drawHeadFeatures(in: ctx, center: headCenter, physics: physics, eyeTheme: settings.eyeTheme, coat: coat)
 
         // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / Siamese chocolate socks!)
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
 
-        // 8. Floating Mechanical Keycap Badges
+        // 8b. Apple Laptop Transparent A & B Side (open display lid drawn transparently so cat & paws remain unobstructed!)
+        if hw.shouldShowLaptop {
+            drawLaptopTransparentLid(in: ctx, color: hw.effectiveLaptopColor)
+        }
+
+        // 9. Floating Mechanical Keycap Badges
         if settings.showKeyBadges {
             drawFloatingKeycaps(in: ctx, physics: physics)
         }
 
-        // 9. Subtle Petting Sparkles / Sleep Z
+        // 10. Subtle Petting Sparkles / Sleep Z
         drawSparkles(in: ctx, physics: physics, eyeTheme: settings.eyeTheme)
 
-        // 10. Optional non-intrusive Permission Pill if global monitoring not yet granted
+        // 11. Optional non-intrusive Permission Pill if global monitoring not yet granted
         if showPermissionPill {
             drawPermissionPill(in: ctx)
         }
@@ -126,8 +163,9 @@ enum CatRenderer {
     // MARK: - Mini White Mouse
 
     private static func drawMouse(in ctx: CGContext, physics: CatPhysics, theme: KeyboardTheme) {
+        let mouseAnchorX = CatPhysics.mouseBaseCenter.x - (HardwareMonitor.shared.shouldShowLaptop ? 12.0 : 0.0)
         let center = CGPoint(
-            x: CatPhysics.mouseBaseCenter.x + physics.mouseOffset.point.x,
+            x: mouseAnchorX + physics.mouseOffset.point.x,
             y: CatPhysics.mouseBaseCenter.y + physics.mouseOffset.point.y
         )
         let pressShift = max(physics.mousePressLeft.value, physics.mousePressRight.value) * 1.6
@@ -326,21 +364,302 @@ enum CatRenderer {
         }
     }
 
+    // MARK: - Apple Laptop C-Side (Unibody Deck + Trackpad + Black Scissor Keyboard)
+
+    private static func drawLaptopCSide(
+        in ctx: CGContext,
+        physics: CatPhysics,
+        color: MacBookColor,
+        eyeTheme: EyeColorTheme
+    ) {
+        let pal = color.palette
+
+        // C-side unibody deck extends toward the cat (sv = -0.34) for palm rest & Force Touch trackpad,
+        // and slightly wider left/right for MacBook speaker grilles.
+        let tl = KeyboardLayout.screenQuadPoint(su: -0.09, sv: -0.34)
+        let tr = KeyboardLayout.screenQuadPoint(su: 1.09, sv: -0.34)
+        let bl = KeyboardLayout.screenQuadPoint(su: -0.10, sv: 1.09)
+        let br = KeyboardLayout.screenQuadPoint(su: 1.10, sv: 1.09)
+        let lipDepth: CGFloat = 5.0
+
+        // 1. Soft ambient desk shadow under laptop
+        ctx.saveGState()
+        let shadowPath = roundedQuadPath(
+            tl: offsetY(tl, lipDepth + 2.5),
+            tr: offsetY(tr, lipDepth + 2.5),
+            br: offsetY(br, lipDepth + 3.5),
+            bl: offsetY(bl, lipDepth + 3.5),
+            radius: 7.5
+        )
+        ctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.24).cgColor)
+        ctx.addPath(shadowPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 2. Machined aluminum lower 3D lip
+        let lowerPath = roundedQuadPath(
+            tl: offsetY(tl, lipDepth),
+            tr: offsetY(tr, lipDepth),
+            br: offsetY(br, lipDepth),
+            bl: offsetY(bl, lipDepth),
+            radius: 7.0
+        )
+        ctx.saveGState()
+        ctx.setFillColor(pal.chassisSide.cgColor)
+        ctx.addPath(lowerPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 3. Anodized aluminum C-side top surface with subtle metallic gradient
+        let deckPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 6.5)
+        ctx.saveGState()
+        ctx.addPath(deckPath)
+        ctx.clip()
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let gradColors = [pal.deckTop.cgColor, pal.deckBottom.cgColor] as CFArray
+        if let grad = CGGradient(colorsSpace: cs, colors: gradColors, locations: [0.0, 1.0]) {
+            ctx.drawLinearGradient(
+                grad,
+                start: CGPoint(x: (tl.x + tr.x) * 0.5, y: tl.y),
+                end: CGPoint(x: (bl.x + br.x) * 0.5, y: br.y),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        }
+        ctx.restoreGState()
+
+        // Crisp chamfered aluminum edge
+        ctx.saveGState()
+        ctx.setStrokeColor(pal.borderEdge.cgColor)
+        ctx.setLineWidth(1.1)
+        ctx.addPath(deckPath)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // 4. Force Touch Trackpad (centered closest to the cat!)
+        let tpTL = KeyboardLayout.screenQuadPoint(su: 0.28, sv: -0.29)
+        let tpTR = KeyboardLayout.screenQuadPoint(su: 0.72, sv: -0.29)
+        let tpBL = KeyboardLayout.screenQuadPoint(su: 0.275, sv: -0.05)
+        let tpBR = KeyboardLayout.screenQuadPoint(su: 0.725, sv: -0.05)
+        let tpPath = roundedQuadPath(tl: tpTL, tr: tpTR, br: tpBR, bl: tpBL, radius: 2.5)
+        ctx.saveGState()
+        let tpClick = max(physics.mousePressLeft.value, physics.mousePressRight.value)
+        var tpFill = pal.trackpadFill
+        if physics.leftPawOnTrackpad && tpClick > 0.04 {
+            tpFill = blendColor(tpFill, eyeTheme.glowColor, t: tpClick * 0.28)
+        }
+        ctx.setFillColor(tpFill.cgColor)
+        ctx.addPath(tpPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(pal.trackpadBorder.cgColor)
+        ctx.setLineWidth(0.85)
+        ctx.addPath(tpPath)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // 5. Left & Right MacBook speaker grilles flanking the keyboard well
+        ctx.saveGState()
+        ctx.setFillColor(pal.trackpadBorder.withAlphaComponent(0.45).cgColor)
+        for sideU in [-0.055, 1.055] as [CGFloat] {
+            for r in 0..<7 {
+                let sv = 0.06 + CGFloat(r) * 0.14
+                let pt = KeyboardLayout.screenQuadPoint(su: sideU, sv: sv)
+                ctx.fillEllipse(in: CGRect(x: pt.x - 1.0, y: pt.y - 0.8, width: 2.0, height: 1.6))
+            }
+        }
+        ctx.restoreGState()
+
+        // 6. Recessed black MacBook keyboard well
+        let wTL = KeyboardLayout.screenQuadPoint(su: -0.015, sv: -0.015)
+        let wTR = KeyboardLayout.screenQuadPoint(su: 1.015, sv: -0.015)
+        let wBL = KeyboardLayout.screenQuadPoint(su: -0.020, sv: 1.015)
+        let wBR = KeyboardLayout.screenQuadPoint(su: 1.020, sv: 1.015)
+        let wellPath = roundedQuadPath(tl: wTL, tr: wTR, br: wBR, bl: wBL, radius: 3.0)
+        ctx.saveGState()
+        ctx.setFillColor(pal.keyWell.cgColor)
+        ctx.addPath(wellPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 7. Flat black MacBook scissor-switch keycaps with subtle backlit glow when pressed
+        let padU: CGFloat = 0.0032
+        let padV: CGFloat = 0.016
+        let glowBaseColor = eyeTheme.glowColor
+
+        for cap in KeyboardLayout.keycaps {
+            let glow = physics.keyGlow[cap.key] ?? 0
+            let su0 = (1.0 - (cap.xUnits + cap.widthUnits)) + padU
+            let su1 = (1.0 - cap.xUnits) - padU
+            let sv0 = (1.0 - CGFloat(cap.row + 1) / 5.0) + padV
+            let sv1 = (1.0 - CGFloat(cap.row) / 5.0) - padV
+
+            let pressDy = glow * 1.1
+            let kTL = offsetY(KeyboardLayout.screenQuadPoint(su: su0, sv: sv0), pressDy)
+            let kTR = offsetY(KeyboardLayout.screenQuadPoint(su: su1, sv: sv0), pressDy)
+            let kBR = offsetY(KeyboardLayout.screenQuadPoint(su: su1, sv: sv1), pressDy)
+            let kBL = offsetY(KeyboardLayout.screenQuadPoint(su: su0, sv: sv1), pressDy)
+            let kPath = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.2)
+
+            var fill = pal.keycap
+            if glow > 0.02 {
+                fill = blendColor(fill, glowBaseColor, t: glow * 0.62)
+            }
+            ctx.setFillColor(fill.cgColor)
+            ctx.addPath(kPath)
+            ctx.fillPath()
+
+            ctx.setStrokeColor(pal.keycapBorder.cgColor)
+            ctx.setLineWidth(0.55)
+            ctx.addPath(kPath)
+            ctx.strokePath()
+        }
+
+        // Backlit keycap halo on active keys
+        for (key, glow) in physics.keyGlow where glow > 0.05 {
+            let center = KeyboardLayout.canvasPoint(for: key)
+            drawRadialGlow(
+                in: ctx,
+                center: center,
+                radius: 15.0 + glow * 5.0,
+                color: glowBaseColor.withAlphaComponent(0.32 * glow)
+            )
+        }
+
+        // 8. Dark clutch barrel hinge along the bottom edge (closest to viewer)
+        let hTL = KeyboardLayout.screenQuadPoint(su: 0.09, sv: 1.035)
+        let hTR = KeyboardLayout.screenQuadPoint(su: 0.91, sv: 1.035)
+        let hBL = KeyboardLayout.screenQuadPoint(su: 0.09, sv: 1.095)
+        let hBR = KeyboardLayout.screenQuadPoint(su: 0.91, sv: 1.095)
+        let hingePath = roundedQuadPath(tl: hTL, tr: hTR, br: hBR, bl: hBL, radius: 1.6)
+        ctx.saveGState()
+        ctx.setFillColor(pal.hingeColor.cgColor)
+        ctx.addPath(hingePath)
+        ctx.fillPath()
+        ctx.restoreGState()
+    }
+
+    // MARK: - Apple Laptop Transparent A & B Side (Open Display Lid)
+
+    /// Drawn translucently over the front hinge so the viewer sees the full open MacBook
+    /// (A-side aluminum silhouette + B-side bezel/notch) without obstructing any cat or paw movement!
+    private static func drawLaptopTransparentLid(in ctx: CGContext, color: MacBookColor) {
+        let pal = color.palette
+
+        // Bottom of lid attaches seamlessly to the C-side hinge edge
+        let bl = KeyboardLayout.screenQuadPoint(su: -0.095, sv: 1.08)
+        let br = KeyboardLayout.screenQuadPoint(su: 1.095, sv: 1.08)
+        // Top of lid rises in front of the keyboard/lower chest (below the cat's head/eyes!)
+        let lidHeight: CGFloat = 104.0
+        let tl = CGPoint(x: bl.x + 2.0, y: bl.y - lidHeight)
+        let tr = CGPoint(x: br.x - 2.0, y: br.y - lidHeight)
+
+        let lidPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 8.0)
+
+        ctx.saveGState()
+
+        // 1. Ultra-translucent tinted glass fill (keeps cat & paws 100% crisp underneath)
+        ctx.setFillColor(pal.lidTint.cgColor)
+        ctx.addPath(lidPath)
+        ctx.fillPath()
+
+        // 2. Subtle diagonal glass sheen reflection inside the transparent lid
+        ctx.saveGState()
+        ctx.addPath(lidPath)
+        ctx.clip()
+        let sheen = CGMutablePath()
+        sheen.move(to: CGPoint(x: tl.x + 26, y: tl.y - 6))
+        sheen.addLine(to: CGPoint(x: tl.x + 74, y: tl.y - 6))
+        sheen.addLine(to: CGPoint(x: bl.x + 24, y: bl.y + 6))
+        sheen.addLine(to: CGPoint(x: bl.x - 14, y: bl.y + 6))
+        sheen.closeSubpath()
+        ctx.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.065).cgColor)
+        ctx.addPath(sheen)
+        ctx.fillPath()
+
+        // Subtle B-side inner screen bezel outline + iconic MacBook notch silhouette at top center
+        let inset: CGFloat = 5.5
+        let bTL = CGPoint(x: tl.x + inset, y: tl.y + inset)
+        let bTR = CGPoint(x: tr.x - inset, y: tr.y + inset)
+        let bBR = CGPoint(x: br.x - inset, y: br.y - inset * 1.1)
+        let bBL = CGPoint(x: bl.x + inset, y: bl.y - inset * 1.1)
+        let bezelPath = roundedQuadPath(tl: bTL, tr: bTR, br: bBR, bl: bBL, radius: 4.0)
+        ctx.setStrokeColor(pal.lidBorder.withAlphaComponent(0.22).cgColor)
+        ctx.setLineWidth(0.9)
+        ctx.addPath(bezelPath)
+        ctx.strokePath()
+
+        // Subtle camera notch hint at top center of transparent B-side
+        let notchMidX = (bTL.x + bTR.x) * 0.5
+        let notchMidY = (bTL.y + bTR.y) * 0.5
+        let notchRect = CGRect(x: notchMidX - 13, y: notchMidY - 0.5, width: 26, height: 5.0)
+        let notchPath = CGPath(roundedRect: notchRect, cornerWidth: 2.0, cornerHeight: 2.0, transform: nil)
+        ctx.setFillColor(pal.lidBorder.withAlphaComponent(0.24).cgColor)
+        ctx.addPath(notchPath)
+        ctx.fillPath()
+
+        // Faint translucent Apple emblem centered on the A-side back
+        let logoCenter = CGPoint(
+            x: (tl.x + tr.x + bl.x + br.x) * 0.25,
+            y: (tl.y + tr.y + bl.y + br.y) * 0.25 - 1.0
+        )
+        drawTranslucentAppleEmblem(in: ctx, center: logoCenter, color: pal.logoColor)
+        ctx.restoreGState()
+
+        // 3. Crisp translucent metallic outer rim of the lid
+        ctx.setStrokeColor(pal.lidBorder.cgColor)
+        ctx.setLineWidth(1.5)
+        ctx.addPath(lidPath)
+        ctx.strokePath()
+
+        ctx.restoreGState()
+    }
+
+    private static func drawTranslucentAppleEmblem(in ctx: CGContext, center: CGPoint, color: NSColor) {
+        ctx.saveGState()
+        ctx.translateBy(x: center.x, y: center.y)
+        ctx.setFillColor(color.cgColor)
+
+        // Minimalist stylized apple silhouette (compact & clean at small scale)
+        let body = CGMutablePath()
+        body.move(to: CGPoint(x: 0, y: -5.2))
+        body.addCurve(to: CGPoint(x: 7.2, y: -1.5), control1: CGPoint(x: 3.8, y: -6.8), control2: CGPoint(x: 6.8, y: -4.4))
+        // Iconic subtle bite on right side
+        body.addCurve(to: CGPoint(x: 6.8, y: 4.5), control1: CGPoint(x: 4.6, y: 0.2), control2: CGPoint(x: 4.6, y: 3.4))
+        body.addCurve(to: CGPoint(x: 0.2, y: 8.6), control1: CGPoint(x: 5.5, y: 7.8), control2: CGPoint(x: 2.4, y: 9.2))
+        body.addCurve(to: CGPoint(x: -7.2, y: 3.0), control1: CGPoint(x: -2.4, y: 9.2), control2: CGPoint(x: -6.2, y: 7.4))
+        body.addCurve(to: CGPoint(x: 0, y: -5.2), control1: CGPoint(x: -8.6, y: -2.6), control2: CGPoint(x: -4.2, y: -6.8))
+        body.closeSubpath()
+        ctx.addPath(body)
+        ctx.fillPath()
+
+        // Little tilted leaf on top
+        let leaf = CGMutablePath()
+        leaf.move(to: CGPoint(x: 0.2, y: -6.2))
+        leaf.addQuadCurve(to: CGPoint(x: 3.8, y: -10.0), control: CGPoint(x: 0.6, y: -9.5))
+        leaf.addQuadCurve(to: CGPoint(x: 0.2, y: -6.2), control: CGPoint(x: 3.6, y: -6.8))
+        leaf.closeSubpath()
+        ctx.addPath(leaf)
+        ctx.fillPath()
+
+        ctx.restoreGState()
+    }
+
     // MARK: - Tail
 
     private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, coat: CatCoatTheme) {
         let p = physics.tailPhase
         let hunt = max(0, min(1, physics.huntIntensity.value))
-        let wag1 = sin(p) * (8.0 + hunt * 5.5)
-        let wag2 = cos(p * 1.3) * (6.0 + hunt * 4.5)
-        // Tail drops lower & swishes tautly when stalking/hunting!
-        let huntDrop = hunt * 14.0
+        let sleepCalm = 1.0 - physics.sleepiness * 0.65
+        let wag1 = sin(p) * (8.0 + hunt * 5.5) * sleepCalm
+        let wag2 = cos(p * 1.3) * (6.0 + hunt * 4.5) * sleepCalm
+        // Tail drops lower & swishes tautly when stalking/hunting, or curls low & cozy when sleeping!
+        let huntDrop = hunt * 14.0 + physics.sleepiness * 18.0
+        let sleepCurlIn = physics.sleepiness * 14.0
 
         // Signature low sweep out to the right, then playful upward curl at the tip!
         let root = CGPoint(x: seatX + 34, y: seatY - 6)
-        let c1 = CGPoint(x: seatX + 64, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4)
-        let c2 = CGPoint(x: seatX + 66 + wag2 * 0.4, y: seatY - 26 + wag1 * 0.7 + huntDrop)
-        let tip = CGPoint(x: seatX + 91 + wag2 * 0.5, y: seatY - 30 + wag1 * 0.85 + huntDrop)
+        let c1 = CGPoint(x: seatX + 64 - sleepCurlIn * 0.3, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4)
+        let c2 = CGPoint(x: seatX + 66 - sleepCurlIn * 0.7 + wag2 * 0.4, y: seatY - 26 + wag1 * 0.7 + huntDrop)
+        let tip = CGPoint(x: seatX + 91 - sleepCurlIn + wag2 * 0.5, y: seatY - 30 + wag1 * 0.85 + huntDrop)
 
         ctx.saveGState()
         let tailColor = (coat == .siamese) ? siamesePoint : catBlack
@@ -505,7 +824,285 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    // MARK: - 3rd Key Hind Foot Easter Egg
+    // MARK: - Configurable Necktie / Bow Tie Accessory (Style + Color + Scottish Tartan / Stripes / Polka Dots / Solid)
+
+    private static func drawTieAccessory(
+        in ctx: CGContext,
+        seatX: CGFloat,
+        headCenter: CGPoint,
+        breath: CGFloat,
+        physics: CatPhysics,
+        style: TieStyle,
+        colorTheme: TieColorTheme,
+        pattern: TiePattern,
+        coat: CatCoatTheme
+    ) {
+        let pal = colorTheme.palette
+        let yaw = physics.headYaw.value
+        let neckX = seatX * 0.45 + headCenter.x * 0.55 + yaw * 4.5
+        let neckY = headCenter.y + 30.5 + breath * 0.35
+        let tilt = physics.bodyTilt.value * 0.65 + physics.headTilt.value * 0.35
+        let outlineColor = (coat == .siamese ? siameseOutline : NSColor(calibratedWhite: 0.04, alpha: 0.86)).cgColor
+
+        ctx.saveGState()
+        ctx.translateBy(x: neckX, y: neckY)
+        ctx.rotate(by: tilt)
+
+        // 1. Subtle collar band curving naturally around the neck
+        let collarPath = CGMutablePath()
+        collarPath.move(to: CGPoint(x: -24.5, y: -3.5))
+        collarPath.addQuadCurve(to: CGPoint(x: 24.5, y: -3.5), control: CGPoint(x: 0, y: 4.5))
+        collarPath.addLine(to: CGPoint(x: 23.0, y: 1.5))
+        collarPath.addQuadCurve(to: CGPoint(x: -23.0, y: 1.5), control: CGPoint(x: 0, y: 8.8))
+        collarPath.closeSubpath()
+
+        fillTieFabric(in: ctx, path: collarPath, bounds: CGRect(x: -26, y: -6, width: 52, height: 18), palette: pal, pattern: pattern)
+        ctx.setStrokeColor(outlineColor)
+        ctx.setLineWidth(1.0)
+        ctx.addPath(collarPath)
+        ctx.strokePath()
+
+        switch style {
+        case .necktie:
+            // Classic tapered necktie blade hanging down the chest
+            let blade = CGMutablePath()
+            blade.move(to: CGPoint(x: -3.6, y: 5.5))
+            blade.addLine(to: CGPoint(x: 3.6, y: 5.5))
+            blade.addLine(to: CGPoint(x: 8.2, y: 27.0))
+            blade.addLine(to: CGPoint(x: 0.0, y: 35.5))
+            blade.addLine(to: CGPoint(x: -8.2, y: 27.0))
+            blade.closeSubpath()
+
+            // Subtle soft drop shadow beneath tie blade
+            ctx.saveGState()
+            ctx.translateBy(x: 0.6, y: 1.4)
+            ctx.setFillColor(NSColor(calibratedWhite: 0.0, alpha: 0.25).cgColor)
+            ctx.addPath(blade)
+            ctx.fillPath()
+            ctx.restoreGState()
+
+            fillTieFabric(in: ctx, path: blade, bounds: CGRect(x: -10, y: 4, width: 20, height: 34), palette: pal, pattern: pattern)
+
+            // Subtle 3D cylindrical silk sheen along the tie blade
+            ctx.saveGState()
+            ctx.addPath(blade)
+            ctx.clip()
+            let cs = CGColorSpaceCreateDeviceRGB()
+            let shadeColors = [
+                NSColor(calibratedWhite: 0.0, alpha: 0.08).cgColor,
+                NSColor(calibratedWhite: 1.0, alpha: 0.18).cgColor,
+                NSColor(calibratedWhite: 0.0, alpha: 0.10).cgColor
+            ] as CFArray
+            if let shadeGrad = CGGradient(colorsSpace: cs, colors: shadeColors, locations: [0.0, 0.36, 1.0]) {
+                ctx.drawLinearGradient(
+                    shadeGrad,
+                    start: CGPoint(x: -8.5, y: 20),
+                    end: CGPoint(x: 8.5, y: 20),
+                    options: []
+                )
+            }
+            ctx.restoreGState()
+
+            ctx.setStrokeColor(outlineColor)
+            ctx.setLineWidth(1.1)
+            ctx.setLineJoin(.round)
+            ctx.addPath(blade)
+            ctx.strokePath()
+
+            // Rounded-trapezoid tie knot at the top center
+            let knot = CGMutablePath()
+            knot.move(to: CGPoint(x: -5.4, y: -1.0))
+            knot.addQuadCurve(to: CGPoint(x: 5.4, y: -1.0), control: CGPoint(x: 0, y: -2.4))
+            knot.addLine(to: CGPoint(x: 3.8, y: 6.4))
+            knot.addQuadCurve(to: CGPoint(x: -3.8, y: 6.4), control: CGPoint(x: 0, y: 7.4))
+            knot.closeSubpath()
+
+            fillTieFabric(in: ctx, path: knot, bounds: CGRect(x: -7, y: -3, width: 14, height: 12), palette: pal, pattern: pattern)
+            ctx.setStrokeColor(outlineColor)
+            ctx.setLineWidth(1.05)
+            ctx.addPath(knot)
+            ctx.strokePath()
+
+        case .bowTie:
+            // Symmetrical left & right pleated bow tie wings
+            for sign in [-1.0, 1.0] as [CGFloat] {
+                let wing = CGMutablePath()
+                wing.move(to: CGPoint(x: sign * 3.0, y: 0.2))
+                wing.addQuadCurve(
+                    to: CGPoint(x: sign * 16.5, y: -5.2),
+                    control: CGPoint(x: sign * 10.2, y: -4.8)
+                )
+                wing.addQuadCurve(
+                    to: CGPoint(x: sign * 17.5, y: 3.2),
+                    control: CGPoint(x: sign * 19.2, y: -1.0)
+                )
+                wing.addQuadCurve(
+                    to: CGPoint(x: sign * 15.2, y: 11.0),
+                    control: CGPoint(x: sign * 18.6, y: 8.2)
+                )
+                wing.addQuadCurve(
+                    to: CGPoint(x: sign * 3.0, y: 5.8),
+                    control: CGPoint(x: sign * 9.5, y: 10.6)
+                )
+                wing.closeSubpath()
+
+                // Soft shadow beneath wing
+                ctx.saveGState()
+                ctx.translateBy(x: 0.4, y: 1.3)
+                ctx.setFillColor(NSColor(calibratedWhite: 0.0, alpha: 0.24).cgColor)
+                ctx.addPath(wing)
+                ctx.fillPath()
+                ctx.restoreGState()
+
+                fillTieFabric(
+                    in: ctx,
+                    path: wing,
+                    bounds: CGRect(x: sign > 0 ? 1 : -20, y: -7, width: 19, height: 20),
+                    palette: pal,
+                    pattern: pattern
+                )
+
+                // Subtle pleat crease line radiating from center knot
+                ctx.saveGState()
+                ctx.addPath(wing)
+                ctx.clip()
+                ctx.setStrokeColor(NSColor(calibratedWhite: 0.0, alpha: 0.26).cgColor)
+                ctx.setLineWidth(1.0)
+                ctx.setLineCap(.round)
+                ctx.move(to: CGPoint(x: sign * 4.0, y: 3.0))
+                ctx.addLine(to: CGPoint(x: sign * 11.5, y: 1.6))
+                ctx.move(to: CGPoint(x: sign * 4.0, y: 3.6))
+                ctx.addLine(to: CGPoint(x: sign * 11.0, y: 5.6))
+                ctx.strokePath()
+                ctx.restoreGState()
+
+                ctx.setStrokeColor(outlineColor)
+                ctx.setLineWidth(1.1)
+                ctx.setLineJoin(.round)
+                ctx.addPath(wing)
+                ctx.strokePath()
+            }
+
+            // Plump rounded center bow-tie knot
+            let bowKnotRect = CGRect(x: -4.4, y: -1.6, width: 8.8, height: 9.4)
+            let bowKnot = CGPath(roundedRect: bowKnotRect, cornerWidth: 3.2, cornerHeight: 3.2, transform: nil)
+            fillTieFabric(in: ctx, path: bowKnot, bounds: bowKnotRect.insetBy(dx: -1, dy: -1), palette: pal, pattern: pattern)
+            ctx.setStrokeColor(outlineColor)
+            ctx.setLineWidth(1.1)
+            ctx.addPath(bowKnot)
+            ctx.strokePath()
+        }
+
+        ctx.restoreGState()
+    }
+
+    private static func fillTieFabric(
+        in ctx: CGContext,
+        path: CGPath,
+        bounds: CGRect,
+        palette: TieColorTheme.Palette,
+        pattern: TiePattern
+    ) {
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.clip()
+
+        // Base color
+        ctx.setFillColor(palette.base.cgColor)
+        ctx.fill(bounds)
+
+        switch pattern {
+        case .scottishGrid:
+            // Authentic 45° bias-cut Scottish Tartan plaid
+            ctx.saveGState()
+            ctx.translateBy(x: bounds.midX, y: bounds.midY)
+            ctx.rotate(by: .pi / 4.0)
+            let span: CGFloat = max(bounds.width, bounds.height) * 1.6
+            let cell: CGFloat = 7.6
+
+            // Wide dark-tone tartan bands (horizontal & vertical in rotated space)
+            ctx.setFillColor(palette.dark.withAlphaComponent(0.54).cgColor)
+            var pos = -span
+            while pos <= span {
+                ctx.fill(CGRect(x: pos, y: -span, width: 2.8, height: span * 2))
+                ctx.fill(CGRect(x: -span, y: pos, width: span * 2, height: 2.8))
+                pos += cell
+            }
+
+            // Soft accent intersections for crisp Scottish sett depth
+            ctx.setFillColor(palette.accent.withAlphaComponent(0.42).cgColor)
+            var xPos = -span
+            while xPos <= span {
+                var yPos = -span
+                while yPos <= span {
+                    ctx.fill(CGRect(x: xPos, y: yPos, width: 2.8, height: 2.8))
+                    yPos += cell
+                }
+                xPos += cell
+            }
+
+            // Crisp thin light-ice over-check grid lines centered between dark bands
+            ctx.setStrokeColor(palette.light.withAlphaComponent(0.88).cgColor)
+            ctx.setLineWidth(0.75)
+            pos = -span + cell * 0.5 + 1.4
+            while pos <= span {
+                ctx.move(to: CGPoint(x: pos, y: -span))
+                ctx.addLine(to: CGPoint(x: pos, y: span))
+                ctx.move(to: CGPoint(x: -span, y: pos))
+                ctx.addLine(to: CGPoint(x: span, y: pos))
+                pos += cell
+            }
+            ctx.strokePath()
+            ctx.restoreGState()
+
+        case .diagonalStripe:
+            ctx.saveGState()
+            ctx.translateBy(x: bounds.midX, y: bounds.midY)
+            ctx.rotate(by: .pi / 4.0)
+            let span: CGFloat = max(bounds.width, bounds.height) * 1.6
+            let step: CGFloat = 7.2
+            var pos = -span
+            while pos <= span {
+                ctx.setFillColor(palette.dark.withAlphaComponent(0.82).cgColor)
+                ctx.fill(CGRect(x: pos, y: -span, width: 2.8, height: span * 2))
+                ctx.setFillColor(palette.light.withAlphaComponent(0.90).cgColor)
+                ctx.fill(CGRect(x: pos + 3.4, y: -span, width: 0.9, height: span * 2))
+                pos += step
+            }
+            ctx.restoreGState()
+
+        case .polkaDot:
+            ctx.setFillColor(palette.light.withAlphaComponent(0.92).cgColor)
+            let dx: CGFloat = 5.2
+            let dy: CGFloat = 4.6
+            var row = 0
+            var y = bounds.minY - 2
+            while y <= bounds.maxY + 2 {
+                let offsetX: CGFloat = (row % 2 == 0) ? 0 : dx * 0.5
+                var x = bounds.minX - 2 + offsetX
+                while x <= bounds.maxX + 2 {
+                    ctx.fillEllipse(in: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2))
+                    x += dx
+                }
+                y += dy
+                row += 1
+            }
+
+        case .solid:
+            let cs = CGColorSpaceCreateDeviceRGB()
+            let colors = [palette.base.cgColor, palette.dark.cgColor] as CFArray
+            if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.1, 1.0]) {
+                ctx.drawLinearGradient(
+                    grad,
+                    start: CGPoint(x: bounds.midX, y: bounds.minY),
+                    end: CGPoint(x: bounds.midX, y: bounds.maxY),
+                    options: []
+                )
+            }
+        }
+
+        ctx.restoreGState()
+    }
 
     private static func drawHindFoot(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, coat: CatCoatTheme) {
         let hip = CGPoint(x: seatX + 26, y: seatY + 2)
@@ -699,10 +1296,31 @@ enum CatRenderer {
             return
         }
 
-        let hunt = max(0, min(1, physics.huntIntensity.value))
+        // Mode 3: Peaceful Sleeping Eyes (idle / late-night nap!)
+        if physics.isSleeping {
+            let sleepAlpha = min(1.0, (physics.sleepiness - 0.65) / 0.25)
+            let lidStroke = (coat == .siamese)
+                ? siameseCream.withAlphaComponent(0.72 * sleepAlpha)
+                : contourMint.withAlphaComponent(0.82 * sleepAlpha)
+            ctx.setStrokeColor(lidStroke.cgColor)
+            ctx.setLineWidth(2.3)
+            ctx.setLineCap(.round)
+            // Soft relaxed downward-curved sleeping arc (◡)
+            ctx.move(to: CGPoint(x: -10.5, y: 1.5))
+            ctx.addQuadCurve(
+                to: CGPoint(x: 10.5, y: 1.5),
+                control: CGPoint(x: 0, y: 7.2)
+            )
+            ctx.strokePath()
+            ctx.restoreGState()
+            return
+        }
 
-        // Subtle feline eye angle (straightens slightly when wide-eyed hunting!)
-        ctx.rotate(by: sign * (0.06 * (1.0 - hunt * 0.6)))
+        let hunt = max(0, min(1, physics.huntIntensity.value))
+        let tired = physics.effectiveTiredness
+
+        // Subtle feline eye angle (straightens slightly when wide-eyed hunting, droops subtly when tired!)
+        ctx.rotate(by: sign * (0.06 * (1.0 - hunt * 0.6) - tired * 0.04))
 
         // Eyes grow rounder & slightly larger in full hunting focus!
         let rx: CGFloat = 12.0 + hunt * 1.1
@@ -721,7 +1339,7 @@ enum CatRenderer {
         // Pupil morphs smoothly from vertical almond slit -> HUGE round black boba pupil when hunting!
         let gaze = physics.eyeGaze.point
         let px = gaze.x * (4.2 - hunt * 1.2)
-        let py = gaze.y * (3.6 - hunt * 1.0)
+        let py = gaze.y * (3.6 - hunt * 1.0) + tired * 1.2
         let pScale = physics.pupilScale.value
         let normalW: CGFloat = 5.0 * pScale
         let normalH: CGFloat = 13.5 * min(1.12, pScale)
@@ -745,15 +1363,61 @@ enum CatRenderer {
             ))
         }
 
-        // Eyelid closure mask (matches black face or Siamese espresso mask!)
-        let closure = physics.effectiveEyeClosure
+        // Eyelid closure mask (blinks, drowsy sleepiness, AND heavy 0:00–6:00 AM tired upper eyelids!)
+        let tiredDroop: CGFloat = tired * 0.36
+        let closure = max(physics.effectiveEyeClosure, tiredDroop)
+        let faceMaskColor = (coat == .siamese ? siamesePoint : catBlack)
         if closure > 0.02 {
-            let lidHeight = (ry * 2.2) * closure
-            ctx.setFillColor((coat == .siamese ? siamesePoint : catBlack).cgColor)
-            ctx.fill(CGRect(x: -rx - 2, y: -ry - 2, width: rx * 2 + 4, height: lidHeight))
+            let lidY = -ry + (ry * 2.15) * closure
+            // Slight weary slant on outer corner when tired
+            let slant: CGFloat = tired * 1.8 * sign
+            let lidPath = CGMutablePath()
+            lidPath.move(to: CGPoint(x: -rx - 2, y: -ry - 2))
+            lidPath.addLine(to: CGPoint(x: rx + 2, y: -ry - 2))
+            lidPath.addLine(to: CGPoint(x: rx + 2, y: lidY + slant))
+            lidPath.addQuadCurve(
+                to: CGPoint(x: -rx - 2, y: lidY - slant),
+                control: CGPoint(x: 0, y: lidY + tired * 1.6)
+            )
+            lidPath.closeSubpath()
+            ctx.setFillColor(faceMaskColor.cgColor)
+            ctx.addPath(lidPath)
+            ctx.fillPath()
+
+            // Subtle tired upper-lid crease line so heavy droopy eyelids read unmistakably
+            if tired > 0.2 && physics.effectiveEyeClosure < 0.55 {
+                let lidRim = (coat == .siamese)
+                    ? siameseCream.withAlphaComponent(0.32 * tired)
+                    : contourMint.withAlphaComponent(0.42 * tired)
+                ctx.setStrokeColor(lidRim.cgColor)
+                ctx.setLineWidth(1.1)
+                ctx.move(to: CGPoint(x: -rx, y: lidY - slant))
+                ctx.addQuadCurve(
+                    to: CGPoint(x: rx, y: lidY + slant),
+                    control: CGPoint(x: 0, y: lidY + tired * 1.6)
+                )
+                ctx.strokePath()
+            }
         }
 
         ctx.restoreGState()
+
+        // Late-night (0:00–6:00 AM) tired under-eye bags / dark-circle crescents beneath each eye
+        if tired > 0.15 {
+            let bagColor = (coat == .siamese)
+                ? NSColor(calibratedRed: 0.34, green: 0.24, blue: 0.36, alpha: 0.45 * tired)
+                : NSColor(calibratedRed: 0.52, green: 0.48, blue: 0.64, alpha: 0.44 * tired)
+            ctx.setStrokeColor(bagColor.cgColor)
+            ctx.setLineWidth(1.45)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: -rx * 0.72, y: ry * 0.92))
+            ctx.addQuadCurve(
+                to: CGPoint(x: rx * 0.72, y: ry * 0.92),
+                control: CGPoint(x: 0, y: ry + 4.0)
+            )
+            ctx.strokePath()
+        }
+
         ctx.restoreGState()
     }
 
@@ -811,7 +1475,7 @@ enum CatRenderer {
         let rightShoulder = CGPoint(x: seatX + 24, y: seatY - 56 + breath)
 
         // Left arm
-        if lDist < 6.0 && !physics.leftPawOnMouse && !physics.leftPawTyping {
+        if lDist < 6.0 && !physics.leftPawOnMouse && !physics.leftPawOnTrackpad && !physics.leftPawTyping {
             drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - 18, y: seatY - 30), bottom: CGPoint(x: seatX - 16, y: seatY + 12), isLeft: true, coat: coat)
         } else {
             let mid = CGPoint(
@@ -1079,13 +1743,17 @@ enum CatRenderer {
             ctx.saveGState()
             ctx.setAlpha(alpha * 0.85)
             if sp.isSleepZ {
+                let baseSize: CGFloat = sp.isBigSleepZ ? 13.0 : 10.0
+                let swayX = sin(sp.age * 3.0) * 4.5
+                let label = sp.isBigSleepZ ? "Z" : "z"
                 let attrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 11 + p * 3, weight: .bold),
+                    .font: NSFont.systemFont(ofSize: baseSize + p * 3.5, weight: .bold),
                     .foregroundColor: eyeTheme.primaryColor
                 ]
                 NSGraphicsContext.saveGraphicsState()
                 NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
-                NSAttributedString(string: "z", attributes: attrs).draw(at: sp.position)
+                NSAttributedString(string: label, attributes: attrs)
+                    .draw(at: CGPoint(x: sp.position.x + swayX, y: sp.position.y))
                 NSGraphicsContext.restoreGraphicsState()
             } else {
                 // Tiny glowing chartreuse 4-point star

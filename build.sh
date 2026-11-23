@@ -87,6 +87,7 @@ fi
 
 SWIFT_SOURCES=(
     "$ROOT/Sources/KeyMap.swift"
+    "$ROOT/Sources/HardwareMonitor.swift"
     "$ROOT/Sources/InputEngine.swift"
     "$ROOT/Sources/CatPhysics.swift"
     "$ROOT/Sources/CatRenderer.swift"

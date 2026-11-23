@@ -11,6 +11,11 @@ enum InputEngineStatus: String {
     case needsPermission = "需开启「输入监控」以全局监听键盘"
 }
 
+enum HardwareInputSource {
+    case builtIn
+    case external
+}
+
 /// Dual-layer full-state keyboard & mouse capture engine for macOS.
 /// Layer 1: IOHIDManager (kernel HID — true NKRO, works in games, IME, modifiers, long holds).
 /// Layer 2: CGEventTap (.listenOnly — catches trackpad taps, virtual/remapped keys, scroll).
@@ -24,7 +29,7 @@ final class InputEngine {
     private(set) var activeKeys = Set<PhysicalKey>()
     private(set) var pressedOrder: [PhysicalKey] = []
 
-    // Mouse state
+    // Mouse / Trackpad & live hardware source state
     private(set) var leftMouseDown = false
     private(set) var rightMouseDown = false
     private(set) var otherMouseDown = false
@@ -33,6 +38,16 @@ final class InputEngine {
     private(set) var lastKeyActivityTime: CFTimeInterval = 0
     private(set) var lastMouseLocation: CGPoint = NSEvent.mouseLocation
     private(set) var mouseVelocity: CGVector = .zero
+    private(set) var activeKeyboardSource: HardwareInputSource = .builtIn
+    private(set) var activePointerSource: HardwareInputSource = .builtIn
+
+    func resetExternalKeyboardSourceIfNeeded() {
+        activeKeyboardSource = .builtIn
+    }
+
+    func resetExternalPointerSourceIfNeeded() {
+        activePointerSource = .builtIn
+    }
 
     // Stats
     private(set) var totalKeystrokesToday: Int = 0
@@ -225,6 +240,9 @@ final class InputEngine {
             // Filter out HID error/rollover pseudo-usages (0x00..0x03)
             guard usage >= 0x04 else { return }
             if let key = PhysicalKey.fromHIDUsage(usage) {
+                if intVal != 0 {
+                    updateKeyboardSource(from: IOHIDElementGetDevice(element))
+                }
                 setKeyState(key, isDown: intVal != 0, fromHID: true)
             }
             return
@@ -232,12 +250,25 @@ final class InputEngine {
 
         // Apple Built-in / Magic Keyboard Fn key (Apple Vendor Top Case page 0xFF, usage 0x03)
         if usagePage == 0xFF && usage == 0x03 {
+            if intVal != 0 {
+                updateKeyboardSource(from: IOHIDElementGetDevice(element))
+            }
             setKeyState(.fn, isDown: intVal != 0, fromHID: true)
+            return
+        }
+
+        // Mouse / Trackpad axis movement (Generic Desktop X/Y/Wheel) -> detect active pointer source!
+        if usagePage == UInt32(kHIDPage_GenericDesktop) &&
+            (usage == UInt32(kHIDUsage_GD_X) || usage == UInt32(kHIDUsage_GD_Y) || usage == UInt32(kHIDUsage_GD_Wheel)) {
+            if intVal != 0 {
+                updatePointerSource(from: IOHIDElementGetDevice(element))
+            }
             return
         }
 
         // Mouse buttons (Page 0x09)
         if usagePage == UInt32(kHIDPage_Button) {
+            updatePointerSource(from: IOHIDElementGetDevice(element))
             let isDown = intVal != 0
             if usage == 1 {
                 updateMouseButton(0, isDown: isDown)
@@ -247,6 +278,24 @@ final class InputEngine {
                 updateMouseButton(2, isDown: isDown)
             }
         }
+    }
+
+    private func isInternalHIDDevice(_ device: IOHIDDevice) -> Bool {
+        let builtIn = (IOHIDDeviceGetProperty(device, kIOHIDBuiltInKey as CFString) as? NSNumber)?.intValue ?? 0
+        let transport = (IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String) ?? ""
+        let product = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String) ?? ""
+        return (builtIn != 0)
+            || transport.caseInsensitiveCompare("FIFO") == .orderedSame
+            || transport.caseInsensitiveCompare("SPI") == .orderedSame
+            || product.localizedCaseInsensitiveContains("Apple Internal")
+    }
+
+    private func updateKeyboardSource(from device: IOHIDDevice) {
+        activeKeyboardSource = isInternalHIDDevice(device) ? .builtIn : .external
+    }
+
+    private func updatePointerSource(from device: IOHIDDevice) {
+        activePointerSource = isInternalHIDDevice(device) ? .builtIn : .external
     }
 
     // MARK: - Layer 2: CGEventTap (Listen-Only Companion for Trackpad, Virtual Keys & Scroll)
@@ -355,6 +404,9 @@ final class InputEngine {
             updateMouseButton(2, isDown: false)
         case .scrollWheel:
             lastMouseMoveTime = CACurrentMediaTime()
+            if event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0 {
+                activePointerSource = .builtIn
+            }
         default:
             break
         }
