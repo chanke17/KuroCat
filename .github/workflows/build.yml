@@ -41,6 +41,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check coat artwork and native action regressions
+        run: bash scripts/check-skins.sh
+
+      - name: Check covered eye pixels
+        run: bash scripts/check-eye-closure.sh
 
       - name: Build Universal KuroCat.app (Apple Silicon + Intel)
         run: |

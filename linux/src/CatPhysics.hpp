@@ -13,7 +13,9 @@
 
 enum class CatCoatTheme : int {
     ClassicBlack = 0,
-    Siamese = 1
+    Siamese = 1,
+    Shorthair = 2,
+    OrangeWhite = 3
 };
 
 enum class KeyboardTheme : int {
@@ -26,7 +28,9 @@ enum class EyeColorTheme : int {
     NeonChartreuse = 0,
     SiameseBlue = 1,
     WarmAmber = 2,
-    IceCyan = 3
+    IceCyan = 3,
+    SoftAmber = 4,
+    ReferenceHazel = 5
 };
 
 struct CatSettings {
@@ -71,9 +75,9 @@ struct CatSettings {
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
                 else if (k == "scale") scale = std::clamp(std::stof(v), 0.5f, 2.0f);
-                else if (k == "coatTheme") coatTheme = (CatCoatTheme)std::clamp(std::stoi(v), 0, 1);
+                else if (k == "coatTheme") coatTheme = (CatCoatTheme)std::clamp(std::stoi(v), 0, 3);
                 else if (k == "keyboardTheme") keyboardTheme = (KeyboardTheme)std::clamp(std::stoi(v), 0, 2);
-                else if (k == "eyeTheme") eyeTheme = (EyeColorTheme)std::clamp(std::stoi(v), 0, 3);
+                else if (k == "eyeTheme") eyeTheme = (EyeColorTheme)std::clamp(std::stoi(v), 0, 5);
                 else if (k == "posX") posX = std::stoi(v);
                 else if (k == "posY") posY = std::stoi(v);
             } catch (...) {}

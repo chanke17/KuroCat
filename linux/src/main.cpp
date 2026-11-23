@@ -261,13 +261,16 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
             g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer p) {
                 auto coat = (CatCoatTheme)(intptr_t)p;
                 g_app->settings.coatTheme = coat;
-                g_app->settings.eyeTheme = (coat == CatCoatTheme::Siamese) ? EyeColorTheme::SiameseBlue : EyeColorTheme::NeonChartreuse;
+                g_app->settings.eyeTheme = coat == CatCoatTheme::Siamese ? EyeColorTheme::SiameseBlue :
+                    (coat == CatCoatTheme::ClassicBlack ? EyeColorTheme::NeonChartreuse : EyeColorTheme::SoftAmber);
                 g_app->settings.save();
             }), (gpointer)(intptr_t)c);
             gtk_menu_shell_append(GTK_MENU_SHELL(sub), it);
         };
         addCoat("经典小黑猫 (原版)", CatCoatTheme::ClassicBlack);
         addCoat("挖煤暹罗猫", CatCoatTheme::Siamese);
+        addCoat("美短（银虎斑加白）", CatCoatTheme::Shorthair);
+        addCoat("橘白猫", CatCoatTheme::OrangeWhite);
         GtkWidget* parent = gtk_menu_item_new_with_label("猫咪皮肤 🐱");
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
@@ -309,6 +312,8 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         addEye("暹罗宝石蓝", EyeColorTheme::SiameseBlue);
         addEye("琥珀金瞳", EyeColorTheme::WarmAmber);
         addEye("冰晶浅蓝", EyeColorTheme::IceCyan);
+        addEye("柔和琥珀", EyeColorTheme::SoftAmber);
+        addEye("淡金青绿", EyeColorTheme::ReferenceHazel);
         GtkWidget* parent = gtk_menu_item_new_with_label("瞳色切换");
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);

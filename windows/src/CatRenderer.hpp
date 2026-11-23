@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include "CatPhysics.hpp"
+#include "../../shared/CoatPatterns.hpp"
 
 enum class CatHitZone {
     None,
@@ -97,12 +98,45 @@ private:
     static Gdiplus::Color siameseOutline(BYTE a = 224){ return Gdiplus::Color(a, 66, 48, 40); }
     static Gdiplus::Color siameseWhisker(BYTE a = 174){ return Gdiplus::Color(a, 92, 69, 56); }
 
+    static bool patterned(CatCoatTheme c) { return c == CatCoatTheme::Shorthair || c == CatCoatTheme::OrangeWhite; }
+    static Gdiplus::Color rgb(unsigned int hex, BYTE a = 255) { return Gdiplus::Color(a, (hex >> 16) & 255, (hex >> 8) & 255, hex & 255); }
+    static Gdiplus::Color bodyColor(CatCoatTheme c) { return c == CatCoatTheme::Shorthair ? rgb(0xC2C5C1) : (c == CatCoatTheme::OrangeWhite ? rgb(0xF2EEE4) : catBlack()); }
+    static Gdiplus::Color limbColor(CatCoatTheme c) { return c == CatCoatTheme::OrangeWhite ? rgb(0xD8AA73) : bodyColor(c); }
+    static Gdiplus::Color pawColor(CatCoatTheme c) { return patterned(c) ? rgb(0xF2EEE4) : (c == CatCoatTheme::Siamese ? siamesePoint() : catBlack()); }
+    static Gdiplus::Color earTailColor(CatCoatTheme c) { return c == CatCoatTheme::Siamese ? siamesePoint() : limbColor(c); }
+    static Gdiplus::Color creaseColor(CatCoatTheme c, BYTE a = 255) { return patterned(c) ? rgb(0x8B8171, (BYTE)(a*0.60f)) : contourMint(a); }
+    static Gdiplus::PointF coatMarkPoint(CoatPoint p, bool headSurface, bool skull, CatCoatTheme coat, float seatX, float seatY, Pt head, const CatPhysics& physics) {
+        if (headSurface) {
+            float depth=coat==CatCoatTheme::OrangeWhite ? 29.6f*std::sqrt(std::max(0.0f,1-p.x*p.x/(46*46)-p.y*p.y/(40*40))) : 27.5f;
+            Pt q=skull ? Pt{p.x,p.y} : projectHead3D(p.x,p.y,depth,physics.headYaw.value*0.50f,physics.headPitch.value*0.36f);
+            float c = std::cos(physics.headTilt.value), s = std::sin(physics.headTilt.value);
+            return {head.x + q.x*c - q.y*s, head.y + q.x*s + q.y*c};
+        }
+        float sy = physics.bodySquash.value, sx = 1.0f+(1.0f-sy)*0.55f;
+        float c = std::cos(physics.bodyTilt.value), s = std::sin(physics.bodyTilt.value);
+        return {seatX+p.x*sx*c-p.y*sy*s, seatY+p.x*sx*s+p.y*sy*c};
+    }
+    static void drawCoatMarks(Gdiplus::Graphics& g, float seatX, float seatY, Pt head, const CatPhysics& physics, CatCoatTheme coat) {
+        using namespace Gdiplus;
+        const auto& marks = coat == CatCoatTheme::Shorthair ? shorthairMarks() : orangeWhiteMarks();
+        for (const auto& mark : marks) {
+            std::vector<PointF> points;
+            for (const auto& p : mark.points) points.push_back(coatMarkPoint(p, mark.head, mark.skull, coat, seatX, seatY, head, physics));
+            GraphicsPath path;
+            Color color = rgb(mark.rgb, (BYTE)(mark.alpha*255));
+            if (mark.width == 0) { path.AddPolygon(points.data(), (INT)points.size()); SolidBrush brush(color); g.FillPath(&brush, &path); }
+            else { path.AddLines(points.data(), (INT)points.size()); Pen pen(color, mark.width); pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound); pen.SetLineJoin(LineJoinRound); g.DrawPath(&pen, &path); }
+        }
+    }
+
     static Gdiplus::Color eyePrimary(EyeColorTheme t, BYTE a = 255) {
         switch (t) {
             case EyeColorTheme::NeonChartreuse: return Gdiplus::Color(a, 201, 242, 64);
             case EyeColorTheme::SiameseBlue:    return Gdiplus::Color(a, 94, 199, 250);
             case EyeColorTheme::WarmAmber:      return Gdiplus::Color(a, 250, 194, 56);
             case EyeColorTheme::IceCyan:        return Gdiplus::Color(a, 115, 235, 245);
+            case EyeColorTheme::ReferenceHazel: return Gdiplus::Color(a, 218, 178, 87);
+            case EyeColorTheme::SoftAmber: return Gdiplus::Color(a, 217, 173, 85);
         }
         return Gdiplus::Color(a, 201, 242, 64);
     }
@@ -350,11 +384,27 @@ private:
         PointF c2(seatX + 66.0f + wag2 * 0.4f, seatY - 26.0f + wag1 * 0.7f + huntDrop);
         PointF tip(seatX + 91.0f + wag2 * 0.5f, seatY - 30.0f + wag1 * 0.85f + huntDrop);
 
-        Pen tailPen(coat == CatCoatTheme::Siamese ? siamesePoint() : catBlack(), 11.0f);
+        Pen tailPen(earTailColor(coat), 11.0f);
         tailPen.SetStartCap(LineCapRound);
         tailPen.SetEndCap(LineCapRound);
         tailPen.SetLineJoin(LineJoinRound);
         g.DrawBezier(&tailPen, root, c1, c2, tip);
+        if (patterned(coat)) {
+            GraphicsState state = g.Save();
+            GraphicsPath outline; outline.AddBezier(root,c1,c2,tip); outline.Widen(&tailPen);
+            g.SetClip(&outline, CombineModeIntersect);
+            Pen ring(rgb(coat == CatCoatTheme::Shorthair ? 0x55595A : 0xA57543,128),3.5f);
+            for (float t : {0.50f,0.78f}) {
+                float u=1-t;
+                float x=u*u*u*root.X+3*u*u*t*c1.X+3*u*t*t*c2.X+t*t*t*tip.X;
+                float y=u*u*u*root.Y+3*u*u*t*c1.Y+3*u*t*t*c2.Y+t*t*t*tip.Y;
+                float dx=3*u*u*(c1.X-root.X)+6*u*t*(c2.X-c1.X)+3*t*t*(tip.X-c2.X);
+                float dy=3*u*u*(c1.Y-root.Y)+6*u*t*(c2.Y-c1.Y)+3*t*t*(tip.Y-c2.Y);
+                float len=std::max(0.001f,std::hypot(dx,dy)),nx=-dy/len*8,ny=dx/len*8;
+                g.DrawLine(&ring,x+nx,y+ny,x-nx,y-ny);
+            }
+            g.Restore(state);
+        }
     }
 
     // MARK: - 3D-Projected Ears
@@ -395,7 +445,7 @@ private:
         addQuadBezier(ear, tipR, { (outerBase.x + tipR.x) * 0.5f + sign * 2.5f, (outerBase.y + tipR.y) * 0.5f - 2.0f }, outerBase);
         ear.CloseFigure();
 
-        SolidBrush b(coat == CatCoatTheme::Siamese ? siamesePoint() : catBlack());
+        SolidBrush b(earTailColor(coat));
         g.FillPath(&b, &ear);
     }
 
@@ -444,9 +494,13 @@ private:
         path.AddBezier(lCheek, H(leftCheekX - 1.5f, -14.0f), H(-26.0f + cheekShift * 0.3f, -30.0f + crownDrop), crown);
         path.CloseFigure();
 
-        if (coat == CatCoatTheme::ClassicBlack) {
-            SolidBrush b(catBlack());
+        if (coat != CatCoatTheme::Siamese) {
+            SolidBrush b(bodyColor(coat));
             g.FillPath(&b, &path);
+            if (patterned(coat)) {
+                GraphicsState cs = g.Save(); g.SetClip(&path, CombineModeIntersect);
+                drawCoatMarks(g, seatX, seatY, headCenter, physics, coat); g.Restore(cs);
+            }
         } else {
             GraphicsState cs = g.Save();
             g.SetClip(&path);
@@ -498,13 +552,13 @@ private:
         g.RotateTransform(bTilt * RadToDeg);
         g.ScaleTransform(sx, sy);
 
-        SolidBrush pawBrush(coat == CatCoatTheme::Siamese ? siamesePoint() : catBlack());
+        SolidBrush pawBrush(pawColor(coat));
         g.FillEllipse(&pawBrush, -35.0f, 3.0f, 17.0f, 11.0f);
         if (physics.hindFootActive.value < 0.35f) {
             g.FillEllipse(&pawBrush, 18.0f, 3.0f, 17.0f, 11.0f);
         }
 
-        Pen rimPen(coat == CatCoatTheme::Siamese ? siameseCream(140) : contourMint(148), 1.3f);
+        Pen rimPen(coat == CatCoatTheme::Siamese ? siameseCream(140) : creaseColor(coat,148), 1.3f);
         rimPen.SetStartCap(LineCapRound); rimPen.SetEndCap(LineCapRound);
         g.DrawArc(&rimPen, -34.0f, 1.0f, 15.0f, 15.0f, 15.0f, 150.0f);
         if (physics.hindFootActive.value < 0.35f) {
@@ -585,7 +639,17 @@ private:
         GraphicsPath eyeClip;
         eyeClip.AddEllipse(-rx, -ry, rx * 2.0f, ry * 2.0f);
         GraphicsState cs = g.Save();
-        g.SetClip(&eyeClip);
+        g.SetClip(&eyeClip, CombineModeIntersect);
+        // Leave covered pixels untouched so the underlying face remains seamless.
+        float closure = std::clamp(physics.effectiveEyeClosure(), 0.0f, 1.0f);
+        if (closure >= 1.0f) {
+            g.Restore(cs);
+            g.Restore(st);
+            return;
+        }
+        RectF opening(-rx - 2.0f, -ry + 2.0f * ry * closure,
+                      2.0f * rx + 4.0f, 2.0f * ry * (1.0f - closure));
+        if (closure > 0.0f) g.SetClip(opening, CombineModeIntersect);
 
         SolidBrush irisBrush(eyeCol);
         g.FillRectangle(&irisBrush, -rx - 1.0f, -ry - 1.0f, rx * 2.0f + 2.0f, ry * 2.0f + 2.0f);
@@ -601,6 +665,16 @@ private:
         float pupilW = normalW + (huntDiam - normalW) * hunt;
         float pupilH = normalH + (huntDiam - normalH) * hunt;
 
+        // Reference iris colors, blended only in a narrow ring around the moving pupil.
+        if (eyeTheme == EyeColorTheme::ReferenceHazel) {
+            for (int i = 0; i <= 24; ++i) {
+                float t = i / 24.0f, mix = t*t*(3-2*t), rim = (1-t)*2.2f;
+                SolidBrush ring(Color(255, (BYTE)std::lround(218-77*mix),
+                    (BYTE)std::lround(178-33*mix), (BYTE)std::lround(87+41*mix)));
+                g.FillEllipse(&ring, px-pupilW*0.5f-rim, py-pupilH*0.5f-rim,
+                    pupilW+2*rim, pupilH+2*rim);
+            }
+        }
         SolidBrush pupilBrush(catBlack());
         g.FillEllipse(&pupilBrush, px - pupilW * 0.5f, py - pupilH * 0.5f, pupilW, pupilH);
 
@@ -612,14 +686,6 @@ private:
             g.FillEllipse(&gb, px - pupilW * 0.22f - gr * 0.5f, py - pupilH * 0.22f - gr * 0.5f, gr * 2.0f, gr * 2.0f);
         }
 
-        // Eyelid closure mask (matches black face or Siamese espresso mask!)
-        float closure = physics.effectiveEyeClosure();
-        if (closure > 0.02f) {
-            float lidH = (ry * 2.2f) * closure;
-            SolidBrush lb(coat == CatCoatTheme::Siamese ? siamesePoint() : catBlack());
-            g.FillRectangle(&lb, -rx - 2.0f, -ry - 2.0f, rx * 2.0f + 4.0f, lidH);
-        }
-
         g.Restore(cs);
         g.Restore(st);
     }
@@ -627,7 +693,7 @@ private:
     static void drawWhiskers3D(Gdiplus::Graphics& g, float yawRad, float pitchRad, const CatPhysics& physics, CatCoatTheme coat) {
         using namespace Gdiplus;
         float wiggle = std::sin(physics.time * 4.5f) * (std::max(physics.petHeadIntensity, physics.petBodyIntensity) * 1.2f);
-        Pen pen(coat == CatCoatTheme::Siamese ? siameseWhisker() : whiskerWhite(), 1.05f);
+        Pen pen(coat == CatCoatTheme::Siamese ? siameseWhisker() : (patterned(coat) ? rgb(0x8D8170,174) : whiskerWhite()), 1.05f);
         pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound);
 
         const float rows[3][3] = {
@@ -657,8 +723,13 @@ private:
         float lDist = std::hypot(lPos.x - CatPhysics::LeftPawRest.x, lPos.y - CatPhysics::LeftPawRest.y);
         float rDist = std::hypot(rPos.x - CatPhysics::RightPawRest.x, rPos.y - CatPhysics::RightPawRest.y);
 
-        Pt leftShoulder  = { seatX - 24.0f, seatY - 56.0f + breath };
-        Pt rightShoulder = { seatX + 24.0f, seatY - 56.0f + breath };
+        auto shoulder = [&](float x) -> Pt {
+            float sy=physics.bodySquash.value, sx=1+(1-sy)*0.55f;
+            float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
+            float floor=126+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+52;
+            return {seatX+x*sx*c+43*sy*s, std::max(seatY+x*sx*s-43*sy*c,floor)};
+        };
+        Pt leftShoulder=shoulder(-20), rightShoulder=shoulder(20);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
             drawIdleFrontLeg(g, { seatX - 18.0f, seatY - 30.0f }, { seatX - 16.0f, seatY + 12.0f }, true, coat);
@@ -694,7 +765,12 @@ private:
             g.FillPath(&grad, &lp);
         }
 
-        Pen p(coat == CatCoatTheme::Siamese ? siameseOutline(158) : contourMint(), 1.45f);
+        if (patterned(coat)) {
+            SolidBrush cuff(pawColor(coat));
+            g.FillRectangle(&cuff, bottom.x-7.5f, bottom.y-13.0f, 15.0f, 13.0f);
+            g.FillEllipse(&cuff, bottom.x-7.5f, bottom.y-5.0f, 15.0f, 10.0f);
+        }
+        Pen p(coat == CatCoatTheme::Siamese ? siameseOutline(158) : creaseColor(coat), 1.45f);
         p.SetStartCap(LineCapRound); p.SetEndCap(LineCapRound);
 
         GraphicsPath p1;
@@ -728,15 +804,34 @@ private:
         for (int i = steps; i >= 0; --i) poly.push_back(rightEdge[i]);
 
         GraphicsPath limbPath;
-        limbPath.AddPolygon(poly.data(), (INT)poly.size());
+        limbPath.AddLines(poly.data(), (INT)poly.size());
+        Pt tangent=quadTangent(start,ctrl,end,0);
+        float length=std::max(0.001f,std::hypot(tangent.x,tangent.y));
+        addQuadBezier(limbPath, {rightEdge[0].X,rightEdge[0].Y},
+            {start.x-tangent.x/length*startW*0.5f,start.y-tangent.y/length*startW*0.5f},
+            {leftEdge[0].X,leftEdge[0].Y});
+        limbPath.CloseFigure();
 
         float pawR = endW * 0.58f;
         RectF pawRect(end.x - pawR, end.y - pawR * 0.85f, pawR * 2.0f, pawR * 1.7f);
 
-        if (coat == CatCoatTheme::ClassicBlack) {
-            SolidBrush b(catBlack());
-            g.FillPath(&b, &limbPath);
-            g.FillEllipse(&b, pawRect);
+        if (coat != CatCoatTheme::Siamese) {
+            SolidBrush b(limbColor(coat));
+            if (patterned(coat)) {
+                LinearGradientBrush gradient(PointF(start.x,start.y),PointF(end.x,end.y),pawColor(coat),limbColor(coat));
+                gradient.SetWrapMode(WrapModeTileFlipXY);
+                Color colors[3]={pawColor(coat),limbColor(coat),limbColor(coat)};
+                REAL positions[3]={0,0.30f,1};gradient.SetInterpolationColors(colors,positions,3);
+                g.FillPath(&gradient,&limbPath);
+            } else g.FillPath(&b, &limbPath);
+            if (!patterned(coat)) g.FillEllipse(&b, pawRect);
+            else {
+                std::vector<PointF> points; int first = (int)(steps*0.72f);
+                for (int i=first; i<=steps; ++i) points.push_back(leftEdge[i]);
+                for (int i=steps; i>=first; --i) points.push_back(rightEdge[i]);
+                SolidBrush cuff(pawColor(coat));
+                g.FillPolygon(&cuff, points.data(), (INT)points.size()); g.FillEllipse(&cuff, pawRect);
+            }
         } else {
             // Pad gradient endpoints beyond limb geometry + use WrapModeTileFlipXY so GDI+
             // NEVER wraps t < 0 shoulder corners around to t = 1.0 dark espresso!
@@ -789,7 +884,7 @@ private:
         if (endIdx > startIdx) {
             Color sc = (coat == CatCoatTheme::Siamese)
                 ? siameseOutline((BYTE)(outlineAlpha * 199))
-                : contourMint((BYTE)(outlineAlpha * 229));
+                : creaseColor(coat, (BYTE)(outlineAlpha * 229));
             Pen hp(sc, 1.35f);
             hp.SetStartCap(LineCapRound); hp.SetEndCap(LineCapRound); hp.SetLineJoin(LineJoinRound);
             g.DrawLines(&hp, hiEdge.data() + startIdx, endIdx - startIdx + 1);

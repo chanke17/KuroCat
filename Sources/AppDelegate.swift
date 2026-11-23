@@ -183,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scaleParent.submenu = scaleMenu
         menu.addItem(scaleParent)
 
-        // Cat Coat Skin submenu (经典小黑猫 / 挖煤暹罗猫)
+        // Cat coat submenu: original skins plus approved shorthair and orange-white.
         let coatMenu = NSMenu()
         for coat in CatCoatTheme.allCases {
             let item = NSMenuItem(title: coat.rawValue, action: #selector(selectCoatTheme(_:)), keyEquivalent: "")
@@ -348,6 +348,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             CatSettings.shared.eyeTheme = .neonChartreuse
         case .siamese:
             CatSettings.shared.eyeTheme = .siameseBlue
+        case .shorthair, .orangeWhite:
+            CatSettings.shared.eyeTheme = .softAmber
         }
     }
 
