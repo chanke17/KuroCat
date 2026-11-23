@@ -100,17 +100,29 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
 
     private let previewView = CatEditorPreviewView()
     private var presetButtons: [CatBreedPreset: NSButton] = [:]
+    private let presetHeaderLabel = NSTextField(labelWithString: "")
+    private let styleHeaderLabel = NSTextField(labelWithString: "")
+    private let patLbl = NSTextField(labelWithString: "")
+    private let furLbl = NSTextField(labelWithString: "")
+    private let shortBtn = NSButton(title: "", target: nil, action: nil)
+    private let medBtn = NSButton(title: "", target: nil, action: nil)
+    private let longBtn = NSButton(title: "", target: nil, action: nil)
+    private let colorHeaderLabel = NSTextField(labelWithString: "")
+    private let eyeLabel = NSTextField(labelWithString: "")
+    private let bounceBtn = NSButton(title: "", target: nil, action: nil)
+    private let randomBtn = NSButton(title: "", target: nil, action: nil)
+    private let doneBtn = NSButton(title: "", target: nil, action: nil)
     private let patternPopup = NSPopUpButton()
     private let furSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
-    private let furValueLabel = NSTextField(labelWithString: "短毛 (0%)")
+    private let furValueLabel = NSTextField(labelWithString: "")
 
-    private let primaryLabel = NSTextField(labelWithString: "主毛色")
+    private let primaryLabel = NSTextField(labelWithString: "")
     private let primaryWell = NSColorWell()
     private let secondaryRow = NSStackView()
-    private let secondaryLabel = NSTextField(labelWithString: "花纹色")
+    private let secondaryLabel = NSTextField(labelWithString: "")
     private let secondaryWell = NSColorWell()
     private let tertiaryRow = NSStackView()
-    private let tertiaryLabel = NSTextField(labelWithString: "点缀色")
+    private let tertiaryLabel = NSTextField(labelWithString: "")
     private let tertiaryWell = NSColorWell()
     private let eyeWell = NSColorWell()
 
@@ -121,7 +133,7 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        win.title = "🐱 自定义猫咪编辑器 (KuroCat Studio)"
+        win.title = L10n.tr("🐱 KuroCat Custom Studio", "🐱 自定义猫咪编辑器 (KuroCat Studio)")
         win.level = .floating
         win.isReleasedWhenClosed = false
         win.center()
@@ -129,16 +141,49 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: win)
         win.delegate = self
         buildUI(in: win)
+        refreshLocalizedStrings()
         syncUIFromSettings()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func showEditor() {
+        refreshLocalizedStrings()
         syncUIFromSettings()
         previewView.startAnimating()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func refreshLocalizedStrings() {
+        window?.title = L10n.tr("🐱 KuroCat Custom Studio", "🐱 自定义猫咪编辑器 (KuroCat Studio)")
+        presetHeaderLabel.stringValue = L10n.tr("Breed Presets (1-Click Apply, Freely Customizable)", "品种预设 (一键套用，也可继续自定义)")
+        styleHeaderLabel.stringValue = L10n.tr("Fur Pattern & Length (with Physics)", "毛发花纹与长短毛物理")
+        patLbl.stringValue = L10n.tr("Pattern:", "花纹类型:")
+        furLbl.stringValue = L10n.tr("Fur Length:", "毛发长度:")
+        shortBtn.title = L10n.tr("Short", "短")
+        medBtn.title = L10n.tr("Med", "中")
+        longBtn.title = L10n.tr("Long", "长")
+        colorHeaderLabel.stringValue = L10n.tr("Custom Colors (Click Swatch for Full Color Picker)", "自定义配色 (点击色块打开完整取色器)")
+        eyeLabel.stringValue = L10n.tr("Eye Color", "瞳色")
+        bounceBtn.title = L10n.tr("✨ Test Fur Physics", "✨ 测试毛发晃动")
+        randomBtn.title = L10n.tr("🎲 Randomize", "🎲 随机配色")
+        doneBtn.title = L10n.tr("Done", "完成")
+
+        for (preset, btn) in presetButtons {
+            btn.title = preset.shortName
+            btn.toolTip = preset.displayName
+        }
+
+        let selIdx = patternPopup.indexOfSelectedItem
+        patternPopup.removeAllItems()
+        for pat in FurPattern.allCases {
+            patternPopup.addItem(withTitle: pat.displayName)
+        }
+        if selIdx >= 0 && selIdx < FurPattern.allCases.count {
+            patternPopup.selectItem(at: selIdx)
+        }
+        syncUIFromSettings()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -173,8 +218,9 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
         root.addArrangedSubview(previewView)
 
         // 2. Breed Presets (First Priority!)
-        let presetHeader = makeSectionTitle("品种预设 (一键套用，也可继续自定义)")
-        root.addArrangedSubview(presetHeader)
+        presetHeaderLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        presetHeaderLabel.textColor = .labelColor
+        root.addArrangedSubview(presetHeaderLabel)
 
         let presetGrid = NSStackView()
         presetGrid.orientation = .vertical
@@ -195,7 +241,7 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
                 btn.bezelStyle = .rounded
                 btn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
                 btn.tag = j
-                btn.toolTip = preset.rawValue
+                btn.toolTip = preset.displayName
                 presetButtons[preset] = btn
                 row.addArrangedSubview(btn)
             }
@@ -209,18 +255,18 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
         root.addArrangedSubview(makeSeparator())
 
         // 3. Fur Pattern & Fur Length (with Physics)
-        let styleHeader = makeSectionTitle("毛发花纹与长短毛物理")
-        root.addArrangedSubview(styleHeader)
+        styleHeaderLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        styleHeaderLabel.textColor = .labelColor
+        root.addArrangedSubview(styleHeaderLabel)
 
         let patternRow = NSStackView()
         patternRow.orientation = .horizontal
         patternRow.spacing = 10
         patternRow.alignment = .centerY
-        let patLbl = NSTextField(labelWithString: "花纹类型:")
         patLbl.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        patLbl.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        patLbl.widthAnchor.constraint(equalToConstant: 78).isActive = true
         for pat in FurPattern.allCases {
-            patternPopup.addItem(withTitle: pat.rawValue)
+            patternPopup.addItem(withTitle: pat.displayName)
         }
         patternPopup.target = self
         patternPopup.action = #selector(patternChanged(_:))
@@ -230,28 +276,21 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
 
         let furRow = NSStackView()
         furRow.orientation = .horizontal
-        furRow.spacing = 8
+        furRow.spacing = 6
         furRow.alignment = .centerY
-        let furLbl = NSTextField(labelWithString: "毛发长度:")
         furLbl.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        furLbl.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        furLbl.widthAnchor.constraint(equalToConstant: 78).isActive = true
         furSlider.target = self
         furSlider.action = #selector(furLengthChanged(_:))
         furSlider.isContinuous = true
-        furSlider.widthAnchor.constraint(equalToConstant: 170).isActive = true
-        furValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
+        furSlider.widthAnchor.constraint(equalToConstant: 145).isActive = true
+        furValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         furValueLabel.textColor = .secondaryLabelColor
         furValueLabel.widthAnchor.constraint(equalToConstant: 76).isActive = true
 
-        let shortBtn = NSButton(title: "短", target: self, action: #selector(setShortFur))
-        shortBtn.bezelStyle = .rounded
-        shortBtn.controlSize = .small
-        let medBtn = NSButton(title: "中", target: self, action: #selector(setMedFur))
-        medBtn.bezelStyle = .rounded
-        medBtn.controlSize = .small
-        let longBtn = NSButton(title: "长", target: self, action: #selector(setLongFur))
-        longBtn.bezelStyle = .rounded
-        longBtn.controlSize = .small
+        shortBtn.target = self; shortBtn.action = #selector(setShortFur); shortBtn.bezelStyle = .rounded; shortBtn.controlSize = .small
+        medBtn.target = self; medBtn.action = #selector(setMedFur); medBtn.bezelStyle = .rounded; medBtn.controlSize = .small
+        longBtn.target = self; longBtn.action = #selector(setLongFur); longBtn.bezelStyle = .rounded; longBtn.controlSize = .small
 
         furRow.addArrangedSubview(furLbl)
         furRow.addArrangedSubview(furSlider)
@@ -264,8 +303,9 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
         root.addArrangedSubview(makeSeparator())
 
         // 4. Multi-Color Pickers (NSColorWell -> Full macOS Color Panel!)
-        let colorHeader = makeSectionTitle("自定义配色 (点击色块打开完整取色器)")
-        root.addArrangedSubview(colorHeader)
+        colorHeaderLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        colorHeaderLabel.textColor = .labelColor
+        root.addArrangedSubview(colorHeaderLabel)
 
         let primaryRow = makeColorRow(label: primaryLabel, well: primaryWell, action: #selector(primaryColorChanged(_:)))
         root.addArrangedSubview(primaryRow)
@@ -276,7 +316,6 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
         configureColorRow(tertiaryRow, label: tertiaryLabel, well: tertiaryWell, action: #selector(tertiaryColorChanged(_:)))
         root.addArrangedSubview(tertiaryRow)
 
-        let eyeLabel = NSTextField(labelWithString: "瞳色 (Eye Color)")
         let eyeRow = makeColorRow(label: eyeLabel, well: eyeWell, action: #selector(eyeColorChanged(_:)))
         root.addArrangedSubview(eyeRow)
 
@@ -293,18 +332,13 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
         footer.translatesAutoresizingMaskIntoConstraints = false
         footer.widthAnchor.constraint(equalToConstant: 428).isActive = true
 
-        let bounceBtn = NSButton(title: "✨ 测试毛发晃动", target: self, action: #selector(testPhysicsTapped))
-        bounceBtn.bezelStyle = .rounded
-
-        let randomBtn = NSButton(title: "🎲 随机配色", target: self, action: #selector(randomizeTapped))
-        randomBtn.bezelStyle = .rounded
+        bounceBtn.target = self; bounceBtn.action = #selector(testPhysicsTapped); bounceBtn.bezelStyle = .rounded
+        randomBtn.target = self; randomBtn.action = #selector(randomizeTapped); randomBtn.bezelStyle = .rounded
 
         let flex = NSView()
         flex.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let doneBtn = NSButton(title: "完成", target: self, action: #selector(closeTapped))
-        doneBtn.bezelStyle = .rounded
-        doneBtn.keyEquivalent = "\r"
+        doneBtn.target = self; doneBtn.action = #selector(closeTapped); doneBtn.bezelStyle = .rounded; doneBtn.keyEquivalent = "\r"
 
         footer.addArrangedSubview(bounceBtn)
         footer.addArrangedSubview(randomBtn)
@@ -387,7 +421,14 @@ final class CatEditorWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateFurLabel(_ val: CGFloat) {
         let pct = Int(round(val * 100))
-        let desc = val < 0.25 ? "短毛" : (val < 0.65 ? "中毛" : "长毛蓬松")
+        let desc: String
+        if val < 0.30 {
+            desc = L10n.tr("Short", "短毛")
+        } else if val < 0.65 {
+            desc = L10n.tr("Medium", "中毛")
+        } else {
+            desc = L10n.tr("Fluffy", "长毛蓬松")
+        }
         furValueLabel.stringValue = "\(desc) (\(pct)%)"
     }
 

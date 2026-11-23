@@ -8,6 +8,14 @@ enum KeyboardTheme: String, CaseIterable {
     case classicMilk = "经典奶白暖黄 (原版)"
     case midnightHacker = "暗夜极客黑"
     case retroCream = "复古奶油灰"
+
+    var displayName: String {
+        switch self {
+        case .classicMilk:    return L10n.tr("Classic Milk & Amber", "经典奶白暖黄 (原版)")
+        case .midnightHacker: return L10n.tr("Midnight Hacker", "暗夜极客黑")
+        case .retroCream:     return L10n.tr("Retro Cream", "复古奶油灰")
+        }
+    }
 }
 
 enum CatCoatTheme: String, CaseIterable {
@@ -20,6 +28,15 @@ enum EyeColorTheme: String, CaseIterable {
     case siameseBlue = "暹罗宝石蓝 (暹罗标配)"
     case warmAmber = "琥珀金瞳"
     case iceCyan = "冰晶浅蓝"
+
+    var displayName: String {
+        switch self {
+        case .neonChartreuse: return L10n.tr("Neon Chartreuse", "经典荧光黄绿 (原版)")
+        case .siameseBlue:    return L10n.tr("Siamese Sapphire", "暹罗宝石蓝 (暹罗标配)")
+        case .warmAmber:      return L10n.tr("Warm Amber", "琥珀金瞳")
+        case .iceCyan:        return L10n.tr("Ice Cyan", "冰晶浅蓝")
+        }
+    }
 
     var primaryColor: NSColor {
         switch self {
@@ -47,6 +64,17 @@ enum TieColorTheme: String, CaseIterable {
     case emerald  = "森系墨绿 (Emerald)"
     case amber    = "暖阳姜黄 (Amber)"
     case lavender = "香芋浅紫 (Lavender)"
+
+    var displayName: String {
+        switch self {
+        case .cyan:     return L10n.tr("Cyan", "青色")
+        case .crimson:  return L10n.tr("Crimson", "苏格兰红")
+        case .navy:     return L10n.tr("Navy", "学院藏蓝")
+        case .emerald:  return L10n.tr("Emerald", "森系墨绿")
+        case .amber:    return L10n.tr("Amber", "暖阳姜黄")
+        case .lavender: return L10n.tr("Lavender", "香芋浅紫")
+        }
+    }
 
     struct Palette {
         let base: NSColor
@@ -106,6 +134,13 @@ enum TieColorTheme: String, CaseIterable {
 enum TieStyle: String, CaseIterable {
     case necktie = "经典领带 (Necktie)"
     case bowTie  = "学院领结 (Bow Tie)"
+
+    var displayName: String {
+        switch self {
+        case .necktie: return L10n.tr("Necktie", "经典领带")
+        case .bowTie:  return L10n.tr("Bow Tie", "学院领结")
+        }
+    }
 }
 
 enum TiePattern: String, CaseIterable {
@@ -113,12 +148,29 @@ enum TiePattern: String, CaseIterable {
     case diagonalStripe = "学院斜条纹 (Diagonal Stripe)"
     case polkaDot       = "经典波点 (Polka Dot)"
     case solid          = "简约纯色 (Solid)"
+
+    var displayName: String {
+        switch self {
+        case .scottishGrid:   return L10n.tr("Scottish Tartan", "苏格兰格纹")
+        case .diagonalStripe: return L10n.tr("Diagonal Stripe", "学院斜条纹")
+        case .polkaDot:       return L10n.tr("Polka Dot", "经典波点")
+        case .solid:          return L10n.tr("Solid", "简约纯色")
+        }
+    }
 }
 
 enum TiredEyesMode: String, CaseIterable {
     case autoLateNight = "自动 (0:00–6:00 熬夜眼)"
     case alwaysOn      = "始终开启疲惫眼"
     case off           = "关闭"
+
+    var displayName: String {
+        switch self {
+        case .autoLateNight: return L10n.tr("Auto (0:00–6:00 AM)", "自动 (0:00–6:00 熬夜眼)")
+        case .alwaysOn:      return L10n.tr("Always On", "始终开启疲惫眼")
+        case .off:           return L10n.tr("Off", "关闭")
+        }
+    }
 }
 
 final class CatSettings {

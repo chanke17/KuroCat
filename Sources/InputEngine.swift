@@ -9,6 +9,15 @@ enum InputEngineStatus: String {
     case hidOnly = "硬件 HID 监听中 (游戏/打字全支持)"
     case eventTapOnly = "全局事件监听中 (EventTap)"
     case needsPermission = "需开启「输入监控」以全局监听键盘"
+
+    var displayName: String {
+        switch self {
+        case .fullHardware:    return L10n.tr("Hardware Monitoring Active (HID + EventTap)", "硬件级全状态监听中 (HID + EventTap)")
+        case .hidOnly:         return L10n.tr("Hardware HID Active", "硬件 HID 监听中 (游戏/打字全支持)")
+        case .eventTapOnly:    return L10n.tr("Global Event Monitoring Active", "全局事件监听中 (EventTap)")
+        case .needsPermission: return L10n.tr("Enable Input Monitoring for Global Keys", "需开启「输入监控」以全局监听键盘")
+        }
+    }
 }
 
 enum HardwareInputSource {

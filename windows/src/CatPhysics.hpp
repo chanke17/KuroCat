@@ -8,6 +8,7 @@
 #include <algorithm>
 #include "KeyMap.hpp"
 #include "InputEngine.hpp"
+#include "CatAppearance.hpp"
 
 enum class CatCoatTheme : int {
     ClassicBlack = 0,
@@ -37,6 +38,13 @@ struct CatSettings {
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
     EyeColorTheme eyeTheme = EyeColorTheme::NeonChartreuse;
+    AppLanguage language = AppLanguage::Auto;
+    CatAppearance appearance = makeBreedPreset(CatBreedPreset::ClassicBlack);
+    bool showTie = false;
+    TieStyle tieStyle = TieStyle::Necktie;
+    TieColorTheme tieColor = TieColorTheme::Cyan;
+    TiePattern tiePattern = TiePattern::ScottishGrid;
+    TiredEyesMode tiredEyesMode = TiredEyesMode::AutoLateNight;
     int posX = -99999;
     int posY = -99999;
 
@@ -57,6 +65,25 @@ struct CatSettings {
         coatTheme        = (CatCoatTheme)std::clamp((int)readDword(L"CoatTheme", 0), 0, 1);
         keyboardTheme    = (KeyboardTheme)std::clamp((int)readDword(L"KeyboardTheme", 0), 0, 2);
         eyeTheme         = (EyeColorTheme)std::clamp((int)readDword(L"EyeTheme", 0), 0, 3);
+        language         = (AppLanguage)std::clamp((int)readDword(L"Language", 0), 0, 2);
+        showTie          = readDword(L"ShowTie", 0) != 0;
+        tieStyle         = (TieStyle)std::clamp((int)readDword(L"TieStyle", 0), 0, 1);
+        tieColor         = (TieColorTheme)std::clamp((int)readDword(L"TieColor", 0), 0, 5);
+        tiePattern       = (TiePattern)std::clamp((int)readDword(L"TiePattern", 0), 0, 3);
+        tiredEyesMode    = (TiredEyesMode)std::clamp((int)readDword(L"TiredEyesMode", 0), 0, 2);
+
+        if (readDword(L"HasAppearanceV1", 0) != 0) {
+            appearance.presetID       = (int)readDword(L"PresetID", 0);
+            appearance.pattern        = (FurPattern)std::clamp((int)readDword(L"FurPattern", 0), 0, 5);
+            appearance.furLength      = std::clamp((float)readDword(L"FurLengthPct", 0) / 100.0f, 0.0f, 1.0f);
+            appearance.primaryColor   = RGBColor::unpack(readDword(L"PrimaryColor", appearance.primaryColor.pack()));
+            appearance.secondaryColor = RGBColor::unpack(readDword(L"SecondaryColor", appearance.secondaryColor.pack()));
+            appearance.tertiaryColor  = RGBColor::unpack(readDword(L"TertiaryColor", appearance.tertiaryColor.pack()));
+            appearance.eyeColor       = RGBColor::unpack(readDword(L"EyeColorRGB", appearance.eyeColor.pack()));
+        } else {
+            appearance = makeBreedPreset(coatTheme == CatCoatTheme::Siamese ? CatBreedPreset::Siamese : CatBreedPreset::ClassicBlack);
+        }
+
         DWORD hasPos     = readDword(L"HasPos", 0);
         if (hasPos) {
             posX = (int)readDword(L"PosX", 0);
@@ -80,6 +107,20 @@ struct CatSettings {
         writeDword(L"CoatTheme", (DWORD)coatTheme);
         writeDword(L"KeyboardTheme", (DWORD)keyboardTheme);
         writeDword(L"EyeTheme", (DWORD)eyeTheme);
+        writeDword(L"Language", (DWORD)language);
+        writeDword(L"ShowTie", showTie ? 1 : 0);
+        writeDword(L"TieStyle", (DWORD)tieStyle);
+        writeDword(L"TieColor", (DWORD)tieColor);
+        writeDword(L"TiePattern", (DWORD)tiePattern);
+        writeDword(L"TiredEyesMode", (DWORD)tiredEyesMode);
+        writeDword(L"HasAppearanceV1", 1);
+        writeDword(L"PresetID", (DWORD)appearance.presetID);
+        writeDword(L"FurPattern", (DWORD)appearance.pattern);
+        writeDword(L"FurLengthPct", (DWORD)(appearance.furLength * 100.0f + 0.5f));
+        writeDword(L"PrimaryColor", appearance.primaryColor.pack());
+        writeDword(L"SecondaryColor", appearance.secondaryColor.pack());
+        writeDword(L"TertiaryColor", appearance.tertiaryColor.pack());
+        writeDword(L"EyeColorRGB", appearance.eyeColor.pack());
         if (posX != -99999 && posY != -99999) {
             writeDword(L"HasPos", 1);
             writeDword(L"PosX", (DWORD)posX);
@@ -130,8 +171,9 @@ struct PurrSparkle {
     Pt position;
     Pt velocity;
     float age = 0.0f;
-    float lifetime = 0.9f;
+    float lifetime = 1.45f;
     bool isSleepZ = false;
+    bool isBigSleepZ = false;
 };
 
 class CatPhysics {
@@ -158,6 +200,8 @@ public:
     Spring1D headOffsetY{0.0f};
     Spring1D earFold{0.0f};
     Spring1D earTwitch{0.0f};
+    Spring1D furSwayX{0.0f};
+    Spring1D furSwayY{0.0f};
 
     Spring2D eyeGaze{{0.0f, 0.0f}};
     Spring1D pupilScale{1.0f};
@@ -176,15 +220,27 @@ public:
 
     float time = 0.0f;
     float tailPhase = 0.0f;
+    float breathPhase = 0.0f;
 
     float petHeadIntensity = 0.0f;
     float petBodyIntensity = 0.0f;
     int totalPetSessions = 0;
     float sleepiness = 0.0f;
+    bool isLateNightHours = false;
+    float tiredness = 0.0f;
+
+    bool isSleeping() const { return sleepiness > 0.65f; }
+    float effectiveTiredness() const {
+        float hunt = std::clamp(huntIntensity.value, 0.0f, 1.0f);
+        return std::clamp(tiredness * (1.0f - hunt * 0.78f), 0.0f, 1.0f);
+    }
+    float currentBreathOffset() const {
+        return std::sin(breathPhase) * (1.6f + sleepiness * 1.15f);
+    }
 
     float effectiveEyeClosure() const {
         float petClose = std::max(petHeadIntensity, petBodyIntensity * 0.62f);
-        float sleepClose = sleepiness * 0.92f;
+        float sleepClose = sleepiness * 1.0f;
         return std::min(1.0f, std::max(blinkProgress_, std::max(petClose, sleepClose)));
     }
 
@@ -293,22 +349,51 @@ public:
             }
         }
 
-        // 2. Sleepy idle detection
+        // 2. Late-night clock check (0:00-6:00 AM) & Tiredness
+        if (now - lastClockCheck_ > 5.0) {
+            lastClockCheck_ = now;
+            SYSTEMTIME st = {};
+            GetLocalTime(&st);
+            isLateNightHours = (st.wHour < 6);
+        }
+        float targetTired = 0.0f;
+        if (settings.tiredEyesMode == TiredEyesMode::AlwaysOn) targetTired = 1.0f;
+        else if (settings.tiredEyesMode == TiredEyesMode::AutoLateNight && isLateNightHours) targetTired = 1.0f;
+        tiredness += (targetTired - tiredness) * std::min(1.0f, dt * 2.5f);
+
+        // 2a. Sleepy idle detection (combines local activity + Windows GetLastInputInfo!)
         double lastAny = std::max(engine.lastKeyActivityTime, std::max(engine.lastMouseMoveTime, lastPetTime_));
-        double idleSec = lastAny > 0.0 ? (now - lastAny) : 0.0;
-        if (activeKeys.empty() && idleSec > 45.0) {
-            float targetSleep = std::min(1.0f, (float)((idleSec - 45.0) / 35.0));
-            sleepiness += (targetSleep - sleepiness) * dt * 1.5f;
-            if (sleepiness > 0.8f) {
+        double localIdle = lastAny > 0.0 ? (now - lastAny) : 1e9;
+        double sysIdle = localIdle;
+        LASTINPUTINFO lii = {};
+        lii.cbSize = sizeof(lii);
+        if (GetLastInputInfo(&lii)) {
+            DWORD tickNow = GetTickCount();
+            sysIdle = (double)(tickNow - lii.dwTime) / 1000.0;
+        }
+        double idleSec = std::min(localIdle, sysIdle);
+        double idleThreshold = isLateNightHours ? 18.0 : 45.0;
+        double sleepRamp = isLateNightHours ? 20.0 : 30.0;
+
+        if (activeKeys.empty() && idleSec > idleThreshold && idleSec < 1e8) {
+            float targetSleep = std::min(1.0f, (float)((idleSec - idleThreshold) / sleepRamp));
+            sleepiness += (targetSleep - sleepiness) * std::min(1.0f, dt * 1.6f);
+            if (sleepiness > 0.65f) {
                 sleepZCooldown_ -= dt;
                 if (sleepZCooldown_ <= 0.0f) {
-                    sleepZCooldown_ = 2.6f;
-                    sparkles.push_back({ { SeatAnchor.x + 42.0f, 100.0f }, { 12.0f, -18.0f }, 0.0f, 1.1f, true });
+                    sleepZCooldown_ = sleepZToggle_ ? 1.65f : 2.25f;
+                    sleepZToggle_ = !sleepZToggle_;
+                    sparkles.push_back({
+                        { SeatAnchor.x + 36.0f + (sleepZToggle_ ? 5.0f : 0.0f), 102.0f + sleepiness * 8.0f },
+                        { sleepZToggle_ ? 13.0f : 9.0f, -16.0f },
+                        0.0f, 1.45f, true, sleepZToggle_
+                    });
                 }
             }
         } else {
             sleepiness = std::max(0.0f, sleepiness - dt * 5.0f);
         }
+        breathPhase += dt * (2.1f - sleepiness * 0.95f);
 
         // 2b. Fast Mouse Movement -> Hunting Mode (big round boba pupils + low crouch!)
         float mouseSpeed = std::hypot(engine.mouseVelocity.x, engine.mouseVelocity.y);
@@ -433,9 +518,9 @@ public:
         }
         bodyShiftX.target = std::clamp(targetShiftX, -16.0f, 16.0f);
         bodyTilt.target = std::clamp(targetBodyTilt, -0.12f, 0.12f);
-        bodySquash.target = 1.0f - hunt * 0.11f;
-        headOffsetY.target = (leftPawTyping || rightPawTyping) ? 3.5f : (sleepiness * 5.0f + hunt * 10.5f);
-        earFold.target = std::max(petHeadIntensity * 0.7f, petBodyIntensity * 0.45f) + sleepiness * 0.25f - hunt * 0.18f;
+        bodySquash.target = 1.0f - hunt * 0.11f - sleepiness * 0.085f;
+        headOffsetY.target = (leftPawTyping || rightPawTyping) ? 3.5f : (sleepiness * 10.5f + hunt * 10.5f);
+        earFold.target = std::max(petHeadIntensity * 0.7f, petBodyIntensity * 0.45f) + sleepiness * 0.44f - hunt * 0.18f;
         earTwitch.target = 0.0f;
 
         bodyShiftX.step(dt, 140.0f, 18.0f);
@@ -472,20 +557,21 @@ public:
             lookY = cursorNY * 0.72f + 0.25f;
         }
 
-        if (sleepiness > 0.45f) {
+        if (sleepiness > 0.35f) {
             headYaw.target = 0.0f;
-            headPitch.target = 0.45f * sleepiness;
+            headPitch.target = 0.56f * sleepiness;
         } else {
             headYaw.target = std::clamp(lookX, -1.0f, 1.0f);
             headPitch.target = std::clamp(lookY, -1.0f, 1.0f);
         }
-        float headStiff = 88.0f + hunt * 75.0f;
+        float headStiff = 88.0f + hunt * 75.0f - sleepiness * 28.0f;
         float headDamp  = 14.5f + hunt * 4.5f;
         headYaw.step(dt, headStiff, headDamp);
         headPitch.step(dt, headStiff, headDamp);
 
         if (now - lastPetTime_ > 0.28) {
-            headTilt.target = bodyTilt.target * 0.45f + headYaw.value * (0.11f + hunt * 0.05f) - headYaw.value * headPitch.value * 0.04f;
+            if (sleepiness > 0.35f) headTilt.target = 0.14f * sleepiness;
+            else headTilt.target = bodyTilt.target * 0.45f + headYaw.value * (0.11f + hunt * 0.05f) - headYaw.value * headPitch.value * 0.04f;
         }
         headTilt.step(dt, 130.0f, 16.0f);
 
@@ -515,11 +601,21 @@ public:
             blinkTimer_ = 0.0f;
         }
 
-        // 7. Tail wag speed
+        // 7. Tail wag speed & plush long-fur sway physics
         float kpmBoost = std::min(2.4f, (float)engine.currentKPM() / 160.0f);
         float petBoost = std::max(petHeadIntensity, petBodyIntensity) * 1.4f;
-        float tailSpeed = 1.85f + kpmBoost + petBoost + hunt * 2.8f - sleepiness * 1.1f;
+        float tailSpeed = std::max(0.35f, 1.85f + kpmBoost + petBoost + hunt * 2.8f - sleepiness * 1.45f);
         tailPhase += dt * tailSpeed;
+
+        float furAmt = std::clamp(settings.appearance.furLength, 0.0f, 1.0f);
+        float idleBreezeX = std::sin(time * 2.2f) * (0.85f * furAmt);
+        float idleBreezeY = std::cos(time * 1.8f) * (0.55f * furAmt);
+        float dragX = (-bodyShiftX.velocity * 0.045f - headYaw.velocity * 1.25f - headTilt.velocity * 4.5f) * furAmt;
+        float dragY = (-headOffsetY.velocity * 0.08f + bodySquash.velocity * 4.2f) * furAmt;
+        furSwayX.target = std::clamp(dragX + idleBreezeX, -7.5f, 7.5f);
+        furSwayY.target = std::clamp(dragY + idleBreezeY, -6.0f, 6.0f);
+        furSwayX.step(dt, 64.0f, 7.2f);
+        furSwayY.step(dt, 68.0f, 7.6f);
 
         // 8. Keycap glow decay
         std::unordered_set<PhysicalKey> visualActive;
@@ -568,6 +664,8 @@ private:
     bool isCurrentlyPetting_ = false;
     float petSparkleCooldown_ = 0.0f;
     float sleepZCooldown_ = 0.0f;
+    bool sleepZToggle_ = false;
+    double lastClockCheck_ = -100.0;
 
     PhysicalKey recentLeftKey_ = PhysicalKey::None;
     double recentLeftTime_ = 0.0;

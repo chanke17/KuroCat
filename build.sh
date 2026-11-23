@@ -86,11 +86,13 @@ PYEOF
 fi
 
 SWIFT_SOURCES=(
+    "$ROOT/Sources/Localization.swift"
     "$ROOT/Sources/KeyMap.swift"
     "$ROOT/Sources/CatAppearance.swift"
     "$ROOT/Sources/HardwareMonitor.swift"
     "$ROOT/Sources/InputEngine.swift"
     "$ROOT/Sources/CatPhysics.swift"
+    "$ROOT/Sources/LongFurRenderer.swift"
     "$ROOT/Sources/CatRenderer.swift"
     "$ROOT/Sources/CatEditorWindow.swift"
     "$ROOT/Sources/OverlayWindow.swift"

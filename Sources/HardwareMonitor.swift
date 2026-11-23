@@ -27,21 +27,21 @@ enum MacBookColor: String, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .spaceBlack: return "深空黑色 (Space Black)"
-        case .midnight:   return "午夜色 (Midnight)"
-        case .spaceGray:  return "深空灰色 (Space Gray)"
-        case .silver:     return "银色 (Silver)"
-        case .starlight:  return "星光色 (Starlight)"
-        case .skyBlue:    return "天蓝色 (Sky Blue)"
-        case .neoBlush:   return "MacBook Neo · 桃粉色 (Blush)"
-        case .neoCitrus:  return "MacBook Neo · 柑橘黄 (Citrus)"
-        case .neoIndigo:  return "MacBook Neo · 靛蓝色 (Indigo)"
-        case .imacBlue:   return "iMac · 蓝色 (Blue)"
-        case .imacGreen:  return "iMac · 绿色 (Green)"
-        case .imacPink:   return "iMac · 粉色 (Pink)"
-        case .imacYellow: return "iMac · 黄色 (Yellow)"
-        case .imacOrange: return "iMac · 橙色 (Orange)"
-        case .imacPurple: return "iMac · 紫色 (Purple)"
+        case .spaceBlack: return L10n.tr("Space Black", "深空黑色")
+        case .midnight:   return L10n.tr("Midnight", "午夜色")
+        case .spaceGray:  return L10n.tr("Space Gray", "深空灰色")
+        case .silver:     return L10n.tr("Silver", "银色")
+        case .starlight:  return L10n.tr("Starlight", "星光色")
+        case .skyBlue:    return L10n.tr("Sky Blue", "天蓝色")
+        case .neoBlush:   return L10n.tr("MacBook Neo · Blush", "MacBook Neo · 桃粉色")
+        case .neoCitrus:  return L10n.tr("MacBook Neo · Citrus", "MacBook Neo · 柑橘黄")
+        case .neoIndigo:  return L10n.tr("MacBook Neo · Indigo", "MacBook Neo · 靛蓝色")
+        case .imacBlue:   return L10n.tr("iMac · Blue", "iMac · 蓝色")
+        case .imacGreen:  return L10n.tr("iMac · Green", "iMac · 绿色")
+        case .imacPink:   return L10n.tr("iMac · Pink", "iMac · 粉色")
+        case .imacYellow: return L10n.tr("iMac · Yellow", "iMac · 黄色")
+        case .imacOrange: return L10n.tr("iMac · Orange", "iMac · 橙色")
+        case .imacPurple: return L10n.tr("iMac · Purple", "iMac · 紫色")
         }
     }
 
@@ -352,12 +352,23 @@ enum MacBookColorOption: String, CaseIterable {
         case .imacPurple: return .imacPurple
         }
     }
+    var displayName: String {
+        explicitColor?.displayName ?? L10n.tr("Auto-Match This Mac", "自动匹配本机颜色")
+    }
 }
 
 enum DeskSetupMode: String, CaseIterable {
     case auto = "自动检测外设 (推荐)"
     case laptop = "Apple 笔记本模式"
     case keyboardAndMouse = "经典外接键鼠"
+
+    var displayName: String {
+        switch self {
+        case .auto:             return L10n.tr("Auto-Detect Peripherals (Recommended)", "自动检测外设 (推荐)")
+        case .laptop:           return L10n.tr("Apple Laptop Mode", "Apple 笔记本模式")
+        case .keyboardAndMouse: return L10n.tr("Classic Keyboard & Mouse", "经典外接键鼠")
+        }
+    }
 }
 
 // MARK: - Live Hardware Peripheral & MacBook Finish Monitor
@@ -467,16 +478,16 @@ final class HardwareMonitor {
 
     var hardwareSummary: String {
         if shouldShowLaptop {
-            let colorName = effectiveLaptopColor.displayName.components(separatedBy: " ").first ?? ""
+            let colorName = effectiveLaptopColor.displayName
             if shouldShowExternalMouse {
-                return "💻 MacBook (\(colorName)) + 🖱️ 外接鼠标"
+                return L10n.tr("💻 MacBook (\(colorName)) + 🖱️ Mouse", "💻 MacBook (\(colorName)) + 🖱️ 外接鼠标")
             }
             return "💻 MacBook (\(colorName))"
         }
         var parts: [String] = []
-        if shouldShowExternalKeyboard { parts.append("⌨️ 键盘") }
-        if shouldShowExternalMouse { parts.append("🖱️ 鼠标") }
-        return parts.isEmpty ? "🐾 无外设 (纯猫猫模式)" : parts.joined(separator: " + ")
+        if shouldShowExternalKeyboard { parts.append(L10n.tr("⌨️ Keyboard", "⌨️ 键盘")) }
+        if shouldShowExternalMouse { parts.append(L10n.tr("🖱️ Mouse", "🖱️ 鼠标")) }
+        return parts.isEmpty ? L10n.tr("🐾 No Peripherals", "🐾 无外设 (纯猫猫模式)") : parts.joined(separator: " + ")
     }
 
     // MARK: - Live IOHIDManager Peripheral Enumeration

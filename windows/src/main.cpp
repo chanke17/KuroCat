@@ -3,6 +3,7 @@
 #define _UNICODE
 #include <windows.h>
 #include <shellapi.h>
+#include <commdlg.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <string>
@@ -18,6 +19,7 @@
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "comdlg32.lib")
 
 namespace {
 
@@ -35,16 +37,34 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_BADGES,
     CMD_TOGGLE_FOOT,
     CMD_TOGGLE_PET,
-    CMD_COAT_BLACK,
-    CMD_COAT_SIAMESE,
-    CMD_KB_MILK,
+    CMD_BREED_BASE = 1100,       // 1100..1109 (10 Breed Presets)
+    CMD_PATTERN_BASE = 1120,     // 1120..1125 (6 Fur Patterns)
+    CMD_FUR_SHORT = 1130,
+    CMD_FUR_MEDIUM,
+    CMD_FUR_LONG,
+    CMD_PICK_PRIMARY = 1140,
+    CMD_PICK_SECONDARY,
+    CMD_PICK_TERTIARY,
+    CMD_PICK_EYE,
+    CMD_KB_MILK = 1200,
     CMD_KB_HACKER,
     CMD_KB_RETRO,
-    CMD_EYE_LIME,
+    CMD_EYE_LIME = 1210,
     CMD_EYE_BLUE,
     CMD_EYE_AMBER,
     CMD_EYE_CYAN,
-    CMD_SCALE_65,
+    CMD_TIE_TOGGLE = 1220,
+    CMD_TIE_STYLE_NECK,
+    CMD_TIE_STYLE_BOW,
+    CMD_TIE_COLOR_BASE = 1230,   // 1230..1235
+    CMD_TIE_PAT_BASE = 1240,     // 1240..1243
+    CMD_TIRED_AUTO = 1250,
+    CMD_TIRED_ON,
+    CMD_TIRED_OFF,
+    CMD_LANG_AUTO = 1260,
+    CMD_LANG_EN,
+    CMD_LANG_ZH,
+    CMD_SCALE_65 = 1300,
     CMD_SCALE_85,
     CMD_SCALE_100,
     CMD_SCALE_125,
@@ -53,6 +73,23 @@ enum MenuCmd : UINT {
     CMD_RESET_POS,
     CMD_QUIT
 };
+
+bool pickWinColor(HWND owner, RGBColor& inOut) {
+    static COLORREF cust[16] = {};
+    CHOOSECOLORW cc = {};
+    cc.lStructSize = sizeof(cc);
+    cc.hwndOwner = owner;
+    cc.lpCustColors = cust;
+    cc.rgbResult = RGB(inOut.r, inOut.g, inOut.b);
+    cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+    if (ChooseColorW(&cc)) {
+        inOut.r = GetRValue(cc.rgbResult);
+        inOut.g = GetGValue(cc.rgbResult);
+        inOut.b = GetBValue(cc.rgbResult);
+        return true;
+    }
+    return false;
+}
 
 struct AppState {
     HWND hwnd = nullptr;
@@ -260,72 +297,151 @@ void setClickThrough(HWND hwnd, bool transparent) {
 
 void showContextMenu(AppState& app, POINT screenPt) {
     HMENU menu = CreatePopupMenu();
+    AppLanguage lang = app.settings.language;
+    auto T = [&](const wchar_t* en, const wchar_t* zh) { return trW(lang, en, zh); };
 
     // Status & live stats header
     std::wstring statusStr = app.input.isRawInputRegistered
-        ? L"\u25CF \u786C\u4EF6\u7EA7\u5168\u72B6\u6001\u76D1\u542C\u4E2D (Raw Input \u6E38\u620F/\u6253\u5B57)"
-        : L"\u26A0 Raw Input \u672A\u542F\u52A8";
+        ? T(L"\u25CF Hardware Monitoring Active (Raw Input)", L"\u25CF \u786C\u4EF6\u7EA7\u5168\u72B6\u6001\u76D1\u542C\u4E2D (Raw Input \u6E38\u620F/\u6253\u5B57)")
+        : T(L"\u26A0 Raw Input Inactive", L"\u26A0 Raw Input \u672A\u542F\u52A8");
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, statusStr.c_str());
 
-    std::wstring stats = L"\u4ECA\u65E5\u51FB\u952E " + std::to_wstring(app.input.totalKeystrokesToday)
-        + L"  \u00B7  KPM " + std::to_wstring(app.input.currentKPM())
-        + L"  \u00B7  \u6478\u732B " + std::to_wstring(app.physics.totalPetSessions) + L" \u6B21";
+    std::wstring moodStr;
+    if (app.physics.isSleeping()) moodStr = T(L"  \u00B7  Sleeping", L"  \u00B7  \u547C\u547C\u5927\u7761\u4E2D");
+    else if (app.physics.effectiveTiredness() > 0.35f) moodStr = T(L"  \u00B7  Tired", L"  \u00B7  \u71AC\u591C\u56F0\u56F0\u4E2D");
+
+    std::wstring stats = isChineseUI(lang)
+        ? (L"\u4ECA\u65E5\u51FB\u952E " + std::to_wstring(app.input.totalKeystrokesToday) + L"  \u00B7  KPM " + std::to_wstring(app.input.currentKPM()) + L"  \u00B7  \u6478\u732B " + std::to_wstring(app.physics.totalPetSessions) + L" \u6B21" + moodStr)
+        : (L"Today " + std::to_wstring(app.input.totalKeystrokesToday) + L"  \u00B7  KPM " + std::to_wstring(app.input.currentKPM()) + L"  \u00B7  Pets " + std::to_wstring(app.physics.totalPetSessions) + moodStr);
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, stats.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? L"\u9690\u85CF\u5C0F\u732B" : L"\u663E\u793A\u5C0F\u732B");
-    AppendMenuW(menu, MF_STRING | (app.settings.fullClickThrough ? MF_CHECKED : 0), CMD_TOGGLE_CLICKTHROUGH, L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Ctrl+Alt+Shift+P / \u6309\u4F4FAlt\u53EF\u53F3\u952E)");
-    AppendMenuW(menu, MF_STRING | (app.settings.alwaysOnTop ? MF_CHECKED : 0), CMD_TOGGLE_TOPMOST, L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A");
-    AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8");
+    AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? T(L"Hide KuroCat", L"\u9690\u85CF\u5C0F\u732B") : T(L"Show KuroCat", L"\u663E\u793A\u5C0F\u732B"));
+    AppendMenuW(menu, MF_STRING | (app.settings.fullClickThrough ? MF_CHECKED : 0), CMD_TOGGLE_CLICKTHROUGH, T(L"Full Click-Through (Ctrl+Alt+Shift+P / Hold Alt)", L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Ctrl+Alt+Shift+P / \u6309\u4F4FAlt\u53EF\u53F3\u952E)"));
+    AppendMenuW(menu, MF_STRING | (app.settings.alwaysOnTop ? MF_CHECKED : 0), CMD_TOGGLE_TOPMOST, T(L"Always on Top", L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A"));
+    AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, T(L"Launch at Login", L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING | (app.settings.showKeyBadges ? MF_CHECKED : 0), CMD_TOGGLE_BADGES, L"\u663E\u793A\u6309\u952E\u6C14\u6CE1 ([S] [W] [\u21E7])");
-    AppendMenuW(menu, MF_STRING | (app.settings.footEasterEgg ? MF_CHECKED : 0), CMD_TOGGLE_FOOT, L"3\u952E\u540C\u65F6\u6309\u300C\u7528\u811A\u6309\u300D\u5F69\u86CB");
-    AppendMenuW(menu, MF_STRING | (app.settings.petInteraction ? MF_CHECKED : 0), CMD_TOGGLE_PET, L"\u6478\u5934/\u6478\u80CC\u95ED\u773C\u4E92\u52A8");
+    AppendMenuW(menu, MF_STRING | (app.settings.showKeyBadges ? MF_CHECKED : 0), CMD_TOGGLE_BADGES, T(L"Floating Keycap Badges ([W] [A] [\u21E7])", L"\u663E\u793A\u6309\u952E\u6C14\u6CE1 ([S] [W] [\u21E7])"));
+    AppendMenuW(menu, MF_STRING | (app.settings.footEasterEgg ? MF_CHECKED : 0), CMD_TOGGLE_FOOT, T(L"3-Key Hind-Foot Easter Egg", L"3\u952E\u540C\u65F6\u6309\u300C\u7528\u811A\u6309\u300D\u5F69\u86CB"));
+    AppendMenuW(menu, MF_STRING | (app.settings.petInteraction ? MF_CHECKED : 0), CMD_TOGGLE_PET, T(L"Petting Interaction (Head / Back)", L"\u6478\u5934/\u6478\u80CC\u95ED\u773C\u4E92\u52A8"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    // Cat Coat Skin submenu
-    HMENU coatMenu = CreatePopupMenu();
-    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::ClassicBlack ? MF_CHECKED : 0), CMD_COAT_BLACK, L"\u7ECF\u5178\u5C0F\u9ED1\u732B (\u539F\u7248)");
-    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Siamese ? MF_CHECKED : 0), CMD_COAT_SIAMESE, L"\u6316\u7164\u66B9\u7F57\u732B");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, L"\u732B\u54AA\u76AE\u80A4");
+    // 10 Breed Presets submenu
+    HMENU breedMenu = CreatePopupMenu();
+    const wchar_t* breedEn[10] = { L"Classic Black Cat", L"Seal-Point Siamese", L"Orange Tabby", L"Silver Tabby", L"Tuxedo", L"Calico", L"Long-Haired Ragdoll", L"British Shorthair Blue", L"White Persian", L"Golden Maine Coon" };
+    const wchar_t* breedZh[10] = { L"\u7ECF\u5178\u5C0F\u9ED1\u732B", L"\u6316\u7164\u66B9\u7F57\u732B", L"\u5927\u6A58\u864E\u6591", L"\u7F8E\u77ED\u94F6\u864E\u6591", L"\u5976\u725B\u71D5\u5C3E\u670D", L"\u4E09\u82B1\u62DB\u8D22\u732B", L"\u957F\u6BDB\u5E03\u5076\u732B", L"\u82F1\u77ED\u84DD\u732B", L"\u957F\u6BDB\u767D\u6CE2\u65AF", L"\u91D1\u6E10\u5C42\u7F05\u56E0" };
+    for (int i = 0; i < 10; ++i) {
+        AppendMenuW(breedMenu, MF_STRING | (app.settings.appearance.presetID == i ? MF_CHECKED : 0), CMD_BREED_BASE + i, T(breedEn[i], breedZh[i]));
+    }
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)breedMenu, T(L"Cat Breed Presets", L"\u732B\u54AA\u54C1\u79CD\u9884\u8BBE"));
+
+    // Custom Appearance submenu (Fur Pattern + Fur Length + Native Win32 Color Pickers!)
+    HMENU customMenu = CreatePopupMenu();
+    HMENU patMenu = CreatePopupMenu();
+    const wchar_t* patEn[6] = { L"Solid", L"Colorpoint / Siamese", L"Tuxedo", L"Tabby", L"Calico", L"Spotted" };
+    const wchar_t* patZh[6] = { L"\u7EAF\u8272", L"\u91CD\u70B9\u8272 / \u66B9\u7F57", L"\u5976\u725B / \u71D5\u5C3E\u670D", L"\u864E\u6591", L"\u4E09\u82B1", L"\u6591\u70B9" };
+    for (int i = 0; i < 6; ++i) {
+        AppendMenuW(patMenu, MF_STRING | ((int)app.settings.appearance.pattern == i ? MF_CHECKED : 0), CMD_PATTERN_BASE + i, T(patEn[i], patZh[i]));
+    }
+    AppendMenuW(customMenu, MF_POPUP, (UINT_PTR)patMenu, T(L"Fur Pattern", L"\u6BDB\u53D1\u82B1\u7EB9"));
+    AppendMenuW(customMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(customMenu, MF_STRING | (app.settings.appearance.furLength < 0.30f ? MF_CHECKED : 0), CMD_FUR_SHORT, T(L"Short Fur (Sleek)", L"\u77ED\u6BDB (\u987A\u6ED1)"));
+    AppendMenuW(customMenu, MF_STRING | (app.settings.appearance.furLength >= 0.30f && app.settings.appearance.furLength < 0.70f ? MF_CHECKED : 0), CMD_FUR_MEDIUM, T(L"Medium Fur (Plush)", L"\u4E2D\u6BDB (\u84EC\u677E)"));
+    AppendMenuW(customMenu, MF_STRING | (app.settings.appearance.furLength >= 0.70f ? MF_CHECKED : 0), CMD_FUR_LONG, T(L"Long Fur (Fluffy + Physics)", L"\u957F\u6BDB (\u84EC\u677E\u7269\u7406)"));
+    AppendMenuW(customMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(customMenu, MF_STRING, CMD_PICK_PRIMARY,   T(L"Pick Primary Coat Color...", L"\u9009\u62E9\u4E3B\u6BDB\u8272..."));
+    AppendMenuW(customMenu, MF_STRING, CMD_PICK_SECONDARY, T(L"Pick Markings / Points Color...", L"\u9009\u62E9\u82B1\u7EB9 / \u91CD\u70B9\u8272..."));
+    AppendMenuW(customMenu, MF_STRING, CMD_PICK_TERTIARY,  T(L"Pick Accent / 3rd Color...", L"\u9009\u62E9\u70B9\u7F00 / \u7B2C\u4E09\u8272..."));
+    AppendMenuW(customMenu, MF_STRING, CMD_PICK_EYE,       T(L"Pick Eye Color...", L"\u9009\u62E9\u77B3\u8272..."));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)customMenu, T(L"Custom Cat Studio (Fur / Colors)", L"\u81EA\u5B9A\u4E49\u732B\u54AA (\u6BDB\u53D1/\u53D6\u8272\u5668)"));
+
+    // Tie / Bow Tie submenu
+    HMENU tieMenu = CreatePopupMenu();
+    AppendMenuW(tieMenu, MF_STRING | (app.settings.showTie ? MF_CHECKED : 0), CMD_TIE_TOGGLE, T(L"Wear Tie / Bow Tie", L"\u4F69\u6234\u9886\u5E26 / \u9886\u7ED3"));
+    AppendMenuW(tieMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(tieMenu, MF_STRING | (app.settings.tieStyle == TieStyle::Necktie ? MF_CHECKED : 0), CMD_TIE_STYLE_NECK, T(L"Style: Necktie", L"\u6B3E\u5F0F: \u7ECF\u5178\u9886\u5E26"));
+    AppendMenuW(tieMenu, MF_STRING | (app.settings.tieStyle == TieStyle::BowTie ? MF_CHECKED : 0), CMD_TIE_STYLE_BOW, T(L"Style: Bow Tie", L"\u6B3E\u5F0F: \u5B66\u9662\u9886\u7ED3"));
+    AppendMenuW(tieMenu, MF_SEPARATOR, 0, nullptr);
+    const wchar_t* tcEn[6] = { L"Cyan", L"Crimson", L"Navy", L"Emerald", L"Amber", L"Lavender" };
+    const wchar_t* tcZh[6] = { L"\u9752\u8272", L"\u82CF\u683C\u5170\u7EA2", L"\u5B66\u9662\u85CF\u84DD", L"\u68EE\u7CFB\u58A8\u7EFF", L"\u6696\u9633\u59DC\u9EC4", L"\u9999\u828B\u6D45\u7D2B" };
+    for (int i = 0; i < 6; ++i) {
+        AppendMenuW(tieMenu, MF_STRING | ((int)app.settings.tieColor == i ? MF_CHECKED : 0), CMD_TIE_COLOR_BASE + i, T(tcEn[i], tcZh[i]));
+    }
+    AppendMenuW(tieMenu, MF_SEPARATOR, 0, nullptr);
+    const wchar_t* tpEn[4] = { L"Scottish Tartan", L"Diagonal Stripe", L"Polka Dot", L"Solid" };
+    const wchar_t* tpZh[4] = { L"\u82CF\u683C\u5170\u683C\u7EB9", L"\u5B66\u9662\u659C\u6761\u7EB9", L"\u7ECF\u5178\u6CE2\u70B9", L"\u7B80\u7EA6\u7EAF\u8272" };
+    for (int i = 0; i < 4; ++i) {
+        AppendMenuW(tieMenu, MF_STRING | ((int)app.settings.tiePattern == i ? MF_CHECKED : 0), CMD_TIE_PAT_BASE + i, T(tpEn[i], tpZh[i]));
+    }
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)tieMenu, T(L"Tie / Bow Tie", L"\u9886\u5E26 / \u9886\u7ED3\u914D\u9970"));
 
     // Keyboard Theme submenu
     HMENU kbMenu = CreatePopupMenu();
-    AppendMenuW(kbMenu, MF_STRING | (app.settings.keyboardTheme == KeyboardTheme::ClassicMilk ? MF_CHECKED : 0), CMD_KB_MILK, L"\u7ECF\u5178\u5976\u767D\u6696\u9EC4 (\u539F\u7248)");
-    AppendMenuW(kbMenu, MF_STRING | (app.settings.keyboardTheme == KeyboardTheme::MidnightHacker ? MF_CHECKED : 0), CMD_KB_HACKER, L"\u6697\u591C\u6781\u5BA2\u9ED1");
-    AppendMenuW(kbMenu, MF_STRING | (app.settings.keyboardTheme == KeyboardTheme::RetroCream ? MF_CHECKED : 0), CMD_KB_RETRO, L"\u590D\u53E4\u5976\u6CB9\u7070");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)kbMenu, L"\u952E\u76D8\u914D\u8272");
+    AppendMenuW(kbMenu, MF_STRING | (app.settings.keyboardTheme == KeyboardTheme::ClassicMilk ? MF_CHECKED : 0), CMD_KB_MILK, T(L"Classic Milk & Amber", L"\u7ECF\u5178\u5976\u767D\u6696\u9EC4 (\u539F\u7248)"));
+    AppendMenuW(kbMenu, MF_STRING | (app.settings.keyboardTheme == KeyboardTheme::MidnightHacker ? MF_CHECKED : 0), CMD_KB_HACKER, T(L"Midnight Hacker", L"\u6697\u591C\u6781\u5BA2\u9ED1"));
+    AppendMenuW(kbMenu, MF_STRING | (app.settings.keyboardTheme == KeyboardTheme::RetroCream ? MF_CHECKED : 0), CMD_KB_RETRO, T(L"Retro Cream", L"\u590D\u53E4\u5976\u6CB9\u7070"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)kbMenu, T(L"Keyboard Theme", L"\u952E\u76D8\u914D\u8272"));
 
-    // Eye Color submenu
-    HMENU eyeMenu = CreatePopupMenu();
-    AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::NeonChartreuse ? MF_CHECKED : 0), CMD_EYE_LIME, L"\u7ECF\u5178\u8367\u5149\u9EC4\u7EFF (\u539F\u7248)");
-    AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::SiameseBlue ? MF_CHECKED : 0), CMD_EYE_BLUE, L"\u66B9\u7F57\u5B9D\u77F3\u84DD");
-    AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::WarmAmber ? MF_CHECKED : 0), CMD_EYE_AMBER, L"\u7425\u73C0\u91D1\u77B3");
-    AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::IceCyan ? MF_CHECKED : 0), CMD_EYE_CYAN, L"\u51B0\u6676\u6D45\u84DD");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)eyeMenu, L"\u77B3\u8272\u5207\u6362");
+    // Tired Eyes submenu
+    HMENU tiredMenu = CreatePopupMenu();
+    AppendMenuW(tiredMenu, MF_STRING | (app.settings.tiredEyesMode == TiredEyesMode::AutoLateNight ? MF_CHECKED : 0), CMD_TIRED_AUTO, T(L"Auto (0:00-6:00 AM)", L"\u81EA\u52A8 (0:00-6:00 \u71AC\u591C\u773C)"));
+    AppendMenuW(tiredMenu, MF_STRING | (app.settings.tiredEyesMode == TiredEyesMode::AlwaysOn ? MF_CHECKED : 0), CMD_TIRED_ON, T(L"Always On", L"\u59CB\u7EC8\u5F00\u542F\u75B2\u60EB\u773C"));
+    AppendMenuW(tiredMenu, MF_STRING | (app.settings.tiredEyesMode == TiredEyesMode::Off ? MF_CHECKED : 0), CMD_TIRED_OFF, T(L"Off", L"\u5173\u95ED"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)tiredMenu, T(L"Late-Night Tired Eyes", L"\u71AC\u591C\u75B2\u60EB\u773C"));
 
     // Scale submenu
     HMENU scaleMenu = CreatePopupMenu();
     auto chk = [&](float v) -> UINT { return std::fabs(app.settings.scale - v) < 0.05f ? MF_CHECKED : 0; };
-    AppendMenuW(scaleMenu, MF_STRING | chk(0.65f), CMD_SCALE_65,  L"\u8FF7\u4F60 (0.65x)");
-    AppendMenuW(scaleMenu, MF_STRING | chk(0.85f), CMD_SCALE_85,  L"\u504F\u5C0F (0.85x)");
-    AppendMenuW(scaleMenu, MF_STRING | chk(1.00f), CMD_SCALE_100, L"\u6807\u51C6 (1.0x)");
-    AppendMenuW(scaleMenu, MF_STRING | chk(1.25f), CMD_SCALE_125, L"\u504F\u5927 (1.25x)");
-    AppendMenuW(scaleMenu, MF_STRING | chk(1.50f), CMD_SCALE_150, L"\u8D85\u5927 (1.5x)");
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)scaleMenu, L"\u5C3A\u5BF8\u5927\u5C0F");
+    AppendMenuW(scaleMenu, MF_STRING | chk(0.65f), CMD_SCALE_65,  T(L"Mini (0.65x)", L"\u8FF7\u4F60 (0.65x)"));
+    AppendMenuW(scaleMenu, MF_STRING | chk(0.85f), CMD_SCALE_85,  T(L"Small (0.85x)", L"\u504F\u5C0F (0.85x)"));
+    AppendMenuW(scaleMenu, MF_STRING | chk(1.00f), CMD_SCALE_100, T(L"Standard (1.0x)", L"\u6807\u51C6 (1.0x)"));
+    AppendMenuW(scaleMenu, MF_STRING | chk(1.25f), CMD_SCALE_125, T(L"Large (1.25x)", L"\u504F\u5927 (1.25x)"));
+    AppendMenuW(scaleMenu, MF_STRING | chk(1.50f), CMD_SCALE_150, T(L"Extra Large (1.5x)", L"\u8D85\u5927 (1.5x)"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)scaleMenu, T(L"Size", L"\u5C3A\u5BF8\u5927\u5C0F"));
+
+    // Language submenu
+    HMENU langMenu = CreatePopupMenu();
+    AppendMenuW(langMenu, MF_STRING | (lang == AppLanguage::Auto ? MF_CHECKED : 0), CMD_LANG_AUTO, T(L"System Default (Auto)", L"\u8DDF\u968F\u7CFB\u7EDF (\u81EA\u52A8)"));
+    AppendMenuW(langMenu, MF_STRING | (lang == AppLanguage::English ? MF_CHECKED : 0), CMD_LANG_EN, L"English");
+    AppendMenuW(langMenu, MF_STRING | (lang == AppLanguage::ZhCN ? MF_CHECKED : 0), CMD_LANG_ZH, L"\u7B80\u4F53\u4E2D\u6587");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)langMenu, L"Language / \u8BED\u8A00");
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, CMD_DEMO_BURST, L"\u6F14\u793A\u6253\u5B57\u52A8\u753B");
-    AppendMenuW(menu, MF_STRING, CMD_RESET_POS, L"\u91CD\u7F6E\u4F4D\u7F6E\u5230\u53F3\u4E0B\u89D2");
+    AppendMenuW(menu, MF_STRING, CMD_DEMO_BURST, T(L"Demo Typing Burst", L"\u6F14\u793A\u6253\u5B57\u52A8\u753B"));
+    AppendMenuW(menu, MF_STRING, CMD_RESET_POS, T(L"Reset Position", L"\u91CD\u7F6E\u4F4D\u7F6E\u5230\u53F3\u4E0B\u89D2"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, CMD_QUIT, L"\u9000\u51FA KuroCat");
+    AppendMenuW(menu, MF_STRING, CMD_QUIT, T(L"Quit KuroCat", L"\u9000\u51FA KuroCat"));
 
     HWND menuOwner = app.menuOwnerHwnd ? app.menuOwnerHwnd : app.hwnd;
     SetForegroundWindow(menuOwner);
     UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPt.x, screenPt.y, 0, menuOwner, nullptr);
     PostMessageW(menuOwner, WM_NULL, 0, 0);
     DestroyMenu(menu);
+
+    if (cmd >= CMD_BREED_BASE && cmd < CMD_BREED_BASE + 10) {
+        app.settings.appearance = makeBreedPreset((CatBreedPreset)(cmd - CMD_BREED_BASE));
+        app.settings.saveToRegistry();
+        return;
+    }
+    if (cmd >= CMD_PATTERN_BASE && cmd < CMD_PATTERN_BASE + 6) {
+        app.settings.appearance.pattern = (FurPattern)(cmd - CMD_PATTERN_BASE);
+        app.settings.appearance.presetID = -1;
+        app.settings.saveToRegistry();
+        return;
+    }
+    if (cmd >= CMD_TIE_COLOR_BASE && cmd < CMD_TIE_COLOR_BASE + 6) {
+        app.settings.tieColor = (TieColorTheme)(cmd - CMD_TIE_COLOR_BASE);
+        app.settings.showTie = true;
+        app.settings.saveToRegistry();
+        return;
+    }
+    if (cmd >= CMD_TIE_PAT_BASE && cmd < CMD_TIE_PAT_BASE + 4) {
+        app.settings.tiePattern = (TiePattern)(cmd - CMD_TIE_PAT_BASE);
+        app.settings.showTie = true;
+        app.settings.saveToRegistry();
+        return;
+    }
 
     switch (cmd) {
         case CMD_TOGGLE_VISIBLE:
@@ -337,8 +453,8 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.saveToRegistry();
             if (app.settings.fullClickThrough) {
                 showTrayBalloon(app,
-                    L"KuroCat \u5DF2\u5F00\u542F\u5B8C\u5168\u9F20\u6807\u7A7F\u900F",
-                    L"\u53D6\u6D88\u65B9\u5F0F\uFF1A\u6309 Ctrl+Alt+Shift+P\uFF0C\u6216\u6309\u4F4F Alt \u952E\u53F3\u952E\u5C0F\u732B\uFF0C\u6216\u70B9\u53F3\u4E0B\u89D2\u6258\u76D8\u5C0F\u732B\u56FE\u6807\uFF0C\u6216\u518D\u6B21\u53CC\u51FB KuroCat.exe");
+                    T(L"KuroCat Full Click-Through Enabled", L"KuroCat \u5DF2\u5F00\u542F\u5B8C\u5168\u9F20\u6807\u7A7F\u900F"),
+                    T(L"To unlock: Press Ctrl+Alt+Shift+P, hold Alt + right-click cat, or click the tray icon.", L"\u53D6\u6D88\u65B9\u5F0F\uFF1A\u6309 Ctrl+Alt+Shift+P\uFF0C\u6216\u6309\u4F4F Alt \u952E\u53F3\u952E\u5C0F\u732B\uFF0C\u6216\u70B9\u53F3\u4E0B\u89D2\u6258\u76D8\u5C0F\u732B\u56FE\u6807\uFF0C\u6216\u518D\u6B21\u53CC\u51FB KuroCat.exe"));
             }
             break;
         case CMD_TOGGLE_TOPMOST:
@@ -360,23 +476,36 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.petInteraction = !app.settings.petInteraction;
             app.settings.saveToRegistry();
             break;
-        case CMD_COAT_BLACK:
-            app.settings.coatTheme = CatCoatTheme::ClassicBlack;
-            app.settings.eyeTheme = EyeColorTheme::NeonChartreuse;
-            app.settings.saveToRegistry();
+        case CMD_FUR_SHORT:
+            app.settings.appearance.furLength = 0.0f; app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); break;
+        case CMD_FUR_MEDIUM:
+            app.settings.appearance.furLength = 0.45f; app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); break;
+        case CMD_FUR_LONG:
+            app.settings.appearance.furLength = 1.0f; app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); break;
+        case CMD_PICK_PRIMARY:
+            if (pickWinColor(menuOwner, app.settings.appearance.primaryColor)) { app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); }
             break;
-        case CMD_COAT_SIAMESE:
-            app.settings.coatTheme = CatCoatTheme::Siamese;
-            app.settings.eyeTheme = EyeColorTheme::SiameseBlue;
-            app.settings.saveToRegistry();
+        case CMD_PICK_SECONDARY:
+            if (pickWinColor(menuOwner, app.settings.appearance.secondaryColor)) { app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); }
             break;
+        case CMD_PICK_TERTIARY:
+            if (pickWinColor(menuOwner, app.settings.appearance.tertiaryColor)) { app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); }
+            break;
+        case CMD_PICK_EYE:
+            if (pickWinColor(menuOwner, app.settings.appearance.eyeColor)) { app.settings.appearance.presetID = -1; app.settings.saveToRegistry(); }
+            break;
+        case CMD_TIE_TOGGLE:     app.settings.showTie = !app.settings.showTie; app.settings.saveToRegistry(); break;
+        case CMD_TIE_STYLE_NECK: app.settings.tieStyle = TieStyle::Necktie; app.settings.showTie = true; app.settings.saveToRegistry(); break;
+        case CMD_TIE_STYLE_BOW:  app.settings.tieStyle = TieStyle::BowTie; app.settings.showTie = true; app.settings.saveToRegistry(); break;
+        case CMD_TIRED_AUTO:     app.settings.tiredEyesMode = TiredEyesMode::AutoLateNight; app.settings.saveToRegistry(); break;
+        case CMD_TIRED_ON:       app.settings.tiredEyesMode = TiredEyesMode::AlwaysOn; app.settings.saveToRegistry(); break;
+        case CMD_TIRED_OFF:      app.settings.tiredEyesMode = TiredEyesMode::Off; app.settings.saveToRegistry(); break;
+        case CMD_LANG_AUTO:      app.settings.language = AppLanguage::Auto; app.settings.saveToRegistry(); break;
+        case CMD_LANG_EN:        app.settings.language = AppLanguage::English; app.settings.saveToRegistry(); break;
+        case CMD_LANG_ZH:        app.settings.language = AppLanguage::ZhCN; app.settings.saveToRegistry(); break;
         case CMD_KB_MILK:   app.settings.keyboardTheme = KeyboardTheme::ClassicMilk; app.settings.saveToRegistry(); break;
         case CMD_KB_HACKER: app.settings.keyboardTheme = KeyboardTheme::MidnightHacker; app.settings.saveToRegistry(); break;
         case CMD_KB_RETRO:  app.settings.keyboardTheme = KeyboardTheme::RetroCream; app.settings.saveToRegistry(); break;
-        case CMD_EYE_LIME:  app.settings.eyeTheme = EyeColorTheme::NeonChartreuse; app.settings.saveToRegistry(); break;
-        case CMD_EYE_BLUE:  app.settings.eyeTheme = EyeColorTheme::SiameseBlue; app.settings.saveToRegistry(); break;
-        case CMD_EYE_AMBER: app.settings.eyeTheme = EyeColorTheme::WarmAmber; app.settings.saveToRegistry(); break;
-        case CMD_EYE_CYAN:  app.settings.eyeTheme = EyeColorTheme::IceCyan; app.settings.saveToRegistry(); break;
         case CMD_SCALE_65:  app.settings.scale = 0.65f; applyWindowScaleAndPosition(app, true); break;
         case CMD_SCALE_85:  app.settings.scale = 0.85f; applyWindowScaleAndPosition(app, true); break;
         case CMD_SCALE_100: app.settings.scale = 1.00f; applyWindowScaleAndPosition(app, true); break;

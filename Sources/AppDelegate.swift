@@ -103,12 +103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Status header
         let statusPrefix = engine.status == .needsPermission ? "⚠️" : "🟢"
-        let statusItem = NSMenuItem(title: "\(statusPrefix) \(engine.status.rawValue)", action: engine.status == .needsPermission ? #selector(openInputMonitoringSettings) : nil, keyEquivalent: "")
+        let statusItem = NSMenuItem(title: "\(statusPrefix) \(engine.status.displayName)", action: engine.status == .needsPermission ? #selector(openInputMonitoringSettings) : nil, keyEquivalent: "")
         statusItem.target = self
         menu.addItem(statusItem)
 
         if engine.status == .needsPermission {
-            let grantItem = NSMenuItem(title: "🔑 前往系统设置开启「输入监控」...", action: #selector(openInputMonitoringSettings), keyEquivalent: "")
+            let grantItem = NSMenuItem(title: L10n.tr("🔑 Open Input Monitoring Settings...", "🔑 前往系统设置开启「输入监控」..."), action: #selector(openInputMonitoringSettings), keyEquivalent: "")
             grantItem.target = self
             menu.addItem(grantItem)
         }
@@ -117,39 +117,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let hw = HardwareMonitor.shared
         let moodSuffix: String
         if physics.isSleeping {
-            moodSuffix = "  ·  💤 呼呼大睡中"
+            moodSuffix = L10n.tr("  ·  💤 Sleeping", "  ·  💤 呼呼大睡中")
         } else if physics.effectiveTiredness > 0.35 {
-            moodSuffix = "  ·  🌙 熬夜困困中"
+            moodSuffix = L10n.tr("  ·  🌙 Tired", "  ·  🌙 熬夜困困中")
         } else {
             moodSuffix = ""
         }
-        let statsTitle = "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次\(moodSuffix)"
+        let statsTitle = L10n.tr(
+            "⌨️ Today \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  Pets \(physics.totalPetSessions)\(moodSuffix)",
+            "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次\(moodSuffix)"
+        )
         let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
         statsItem.isEnabled = false
         menu.addItem(statsItem)
 
-        let hwItem = NSMenuItem(title: "外设: \(hw.hardwareSummary)", action: nil, keyEquivalent: "")
+        let hwItem = NSMenuItem(title: L10n.tr("Desk: \(hw.hardwareSummary)", "外设: \(hw.hardwareSummary)"), action: nil, keyEquivalent: "")
         hwItem.isEnabled = false
         menu.addItem(hwItem)
 
         menu.addItem(.separator())
 
         // Visibility & Interactive modes
-        let visItem = NSMenuItem(title: isPetVisible ? "隐藏小黑猫" : "显示小黑猫", action: #selector(toggleVisibility), keyEquivalent: "")
+        let visItem = NSMenuItem(
+            title: isPetVisible ? L10n.tr("Hide KuroCat", "隐藏小黑猫") : L10n.tr("Show KuroCat", "显示小黑猫"),
+            action: #selector(toggleVisibility),
+            keyEquivalent: ""
+        )
         visItem.target = self
         menu.addItem(visItem)
 
-        let clickThroughItem = NSMenuItem(title: "完全鼠标穿透 (按住 ⌥Option 可临时右键/拖动)", action: #selector(toggleClickThrough), keyEquivalent: "")
+        let clickThroughItem = NSMenuItem(
+            title: L10n.tr("Full Click-Through (Hold ⌥Option to Drag/Menu)", "完全鼠标穿透 (按住 ⌥Option 可临时右键/拖动)"),
+            action: #selector(toggleClickThrough),
+            keyEquivalent: ""
+        )
         clickThroughItem.target = self
         clickThroughItem.state = settings.fullClickThrough ? .on : .off
         menu.addItem(clickThroughItem)
 
-        let fullscreenItem = NSMenuItem(title: "全屏游戏/应用置顶显示", action: #selector(toggleFullScreenOverlay), keyEquivalent: "")
+        let fullscreenItem = NSMenuItem(
+            title: L10n.tr("Stay Above Full-Screen Apps & Games", "全屏游戏/应用置顶显示"),
+            action: #selector(toggleFullScreenOverlay),
+            keyEquivalent: ""
+        )
         fullscreenItem.target = self
         fullscreenItem.state = settings.fullScreenOverlay ? .on : .off
         menu.addItem(fullscreenItem)
 
-        let autoStartItem = NSMenuItem(title: "开机自动启动", action: #selector(toggleAutoStart), keyEquivalent: "")
+        let autoStartItem = NSMenuItem(
+            title: L10n.tr("Launch at Login", "开机自动启动"),
+            action: #selector(toggleAutoStart),
+            keyEquivalent: ""
+        )
         autoStartItem.target = self
         autoStartItem.state = isAutoStartEnabled() ? .on : .off
         menu.addItem(autoStartItem)
@@ -157,17 +176,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Features
-        let badgesItem = NSMenuItem(title: "显示按键气泡 ([S] [W] [⇧])", action: #selector(toggleKeyBadges), keyEquivalent: "")
+        let badgesItem = NSMenuItem(
+            title: L10n.tr("Show Floating Keycap Badges ([W] [A] [⇧])", "显示按键气泡 ([S] [W] [⇧])"),
+            action: #selector(toggleKeyBadges),
+            keyEquivalent: ""
+        )
         badgesItem.target = self
         badgesItem.state = settings.showKeyBadges ? .on : .off
         menu.addItem(badgesItem)
 
-        let footItem = NSMenuItem(title: "3键同时按「用脚按」彩蛋 🐾", action: #selector(toggleFootEgg), keyEquivalent: "")
+        let footItem = NSMenuItem(
+            title: L10n.tr("3-Key Hind-Foot Easter Egg 🐾", "3键同时按「用脚按」彩蛋 🐾"),
+            action: #selector(toggleFootEgg),
+            keyEquivalent: ""
+        )
         footItem.target = self
         footItem.state = settings.footEasterEgg ? .on : .off
         menu.addItem(footItem)
 
-        let petItem = NSMenuItem(title: "摸头/摸背闭眼互动", action: #selector(togglePetInteraction), keyEquivalent: "")
+        let petItem = NSMenuItem(
+            title: L10n.tr("Petting Interaction (Head / Back)", "摸头/摸背闭眼互动"),
+            action: #selector(togglePetInteraction),
+            keyEquivalent: ""
+        )
         petItem.target = self
         petItem.state = settings.petInteraction ? .on : .off
         menu.addItem(petItem)
@@ -177,11 +208,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Scale submenu
         let scaleMenu = NSMenu()
         let scales: [(String, CGFloat)] = [
-            ("迷你 (0.65x)", 0.65),
-            ("偏小 (0.85x)", 0.85),
-            ("标准 (1.0x)", 1.0),
-            ("偏大 (1.25x)", 1.25),
-            ("超大 (1.5x)", 1.5)
+            (L10n.tr("Mini (0.65x)", "迷你 (0.65x)"), 0.65),
+            (L10n.tr("Small (0.85x)", "偏小 (0.85x)"), 0.85),
+            (L10n.tr("Standard (1.0x)", "标准 (1.0x)"), 1.0),
+            (L10n.tr("Large (1.25x)", "偏大 (1.25x)"), 1.25),
+            (L10n.tr("Extra Large (1.5x)", "超大 (1.5x)"), 1.5)
         ]
         for (title, val) in scales {
             let item = NSMenuItem(title: title, action: #selector(selectScale(_:)), keyEquivalent: "")
@@ -190,67 +221,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.state = abs(settings.scale - val) < 0.05 ? .on : .off
             scaleMenu.addItem(item)
         }
-        let scaleParent = NSMenuItem(title: "尺寸大小", action: nil, keyEquivalent: "")
+        let scaleParent = NSMenuItem(title: L10n.tr("Size", "尺寸大小"), action: nil, keyEquivalent: "")
         scaleParent.submenu = scaleMenu
         menu.addItem(scaleParent)
 
         // Cat Breed Presets + Custom Cat Studio Editor submenu
         let coatMenu = NSMenu()
-        let customEditorItem = NSMenuItem(title: "🎨 打开自定义猫咪编辑器 (毛发/花纹/取色器)...", action: #selector(openCatEditor), keyEquivalent: "")
+        let customEditorItem = NSMenuItem(
+            title: L10n.tr("🎨 Open Custom Cat Studio (Fur / Pattern / Colors)...", "🎨 打开自定义猫咪编辑器 (毛发/花纹/取色器)..."),
+            action: #selector(openCatEditor),
+            keyEquivalent: ""
+        )
         customEditorItem.target = self
         coatMenu.addItem(customEditorItem)
         coatMenu.addItem(.separator())
 
         for preset in CatBreedPreset.allCases {
-            let item = NSMenuItem(title: preset.rawValue, action: #selector(selectBreedPreset(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: preset.displayName, action: #selector(selectBreedPreset(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = preset.rawValue
             item.state = (settings.appearance.presetID == preset.rawValue) ? .on : .off
             coatMenu.addItem(item)
         }
-        let coatParent = NSMenuItem(title: "猫咪品种与外观 🐱", action: nil, keyEquivalent: "")
+        let coatParent = NSMenuItem(title: L10n.tr("Cat Breed & Appearance 🐱", "猫咪品种与外观 🐱"), action: nil, keyEquivalent: "")
         coatParent.submenu = coatMenu
         menu.addItem(coatParent)
 
         // Keyboard Theme submenu
         let kbMenu = NSMenu()
         for theme in KeyboardTheme.allCases {
-            let item = NSMenuItem(title: theme.rawValue, action: #selector(selectKeyboardTheme(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: theme.displayName, action: #selector(selectKeyboardTheme(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = theme.rawValue
             item.state = settings.keyboardTheme == theme ? .on : .off
             kbMenu.addItem(item)
         }
-        let kbParent = NSMenuItem(title: "键盘配色", action: nil, keyEquivalent: "")
+        let kbParent = NSMenuItem(title: L10n.tr("Keyboard Theme", "键盘配色"), action: nil, keyEquivalent: "")
         kbParent.submenu = kbMenu
         menu.addItem(kbParent)
 
         // Eye Color submenu
         let eyeMenu = NSMenu()
         for eye in EyeColorTheme.allCases {
-            let item = NSMenuItem(title: eye.rawValue, action: #selector(selectEyeTheme(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: eye.displayName, action: #selector(selectEyeTheme(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = eye.rawValue
             item.state = settings.eyeTheme == eye ? .on : .off
             eyeMenu.addItem(item)
         }
-        let eyeParent = NSMenuItem(title: "瞳色切换", action: nil, keyEquivalent: "")
+        let eyeParent = NSMenuItem(title: L10n.tr("Quick Eye Color", "瞳色切换"), action: nil, keyEquivalent: "")
         eyeParent.submenu = eyeMenu
         menu.addItem(eyeParent)
 
         // Configurable Necktie / Bow Tie Accessory submenu
         let tieMenu = NSMenu()
-        let tieToggle = NSMenuItem(title: "佩戴领带 / 领结", action: #selector(toggleShowTie), keyEquivalent: "")
+        let tieToggle = NSMenuItem(title: L10n.tr("Wear Necktie / Bow Tie", "佩戴领带 / 领结"), action: #selector(toggleShowTie), keyEquivalent: "")
         tieToggle.target = self
         tieToggle.state = settings.showTie ? .on : .off
         tieMenu.addItem(tieToggle)
         tieMenu.addItem(.separator())
 
-        let tieStyleHeader = NSMenuItem(title: "款式", action: nil, keyEquivalent: "")
+        let tieStyleHeader = NSMenuItem(title: L10n.tr("Style", "款式"), action: nil, keyEquivalent: "")
         tieStyleHeader.isEnabled = false
         tieMenu.addItem(tieStyleHeader)
         for style in TieStyle.allCases {
-            let item = NSMenuItem(title: style.rawValue, action: #selector(selectTieStyle(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: style.displayName, action: #selector(selectTieStyle(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = style.rawValue
             item.state = (settings.tieStyle == style) ? .on : .off
@@ -258,11 +293,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         tieMenu.addItem(.separator())
 
-        let tieColorHeader = NSMenuItem(title: "颜色", action: nil, keyEquivalent: "")
+        let tieColorHeader = NSMenuItem(title: L10n.tr("Color", "颜色"), action: nil, keyEquivalent: "")
         tieColorHeader.isEnabled = false
         tieMenu.addItem(tieColorHeader)
         for color in TieColorTheme.allCases {
-            let item = NSMenuItem(title: color.rawValue, action: #selector(selectTieColor(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: color.displayName, action: #selector(selectTieColor(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = color.rawValue
             item.state = (settings.tieColor == color) ? .on : .off
@@ -270,24 +305,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         tieMenu.addItem(.separator())
 
-        let tiePatternHeader = NSMenuItem(title: "花纹", action: nil, keyEquivalent: "")
+        let tiePatternHeader = NSMenuItem(title: L10n.tr("Pattern", "花纹"), action: nil, keyEquivalent: "")
         tiePatternHeader.isEnabled = false
         tieMenu.addItem(tiePatternHeader)
         for pattern in TiePattern.allCases {
-            let item = NSMenuItem(title: pattern.rawValue, action: #selector(selectTiePattern(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: pattern.displayName, action: #selector(selectTiePattern(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = pattern.rawValue
             item.state = (settings.tiePattern == pattern) ? .on : .off
             tieMenu.addItem(item)
         }
-        let tieParent = NSMenuItem(title: "领带 / 领结配饰 👔", action: nil, keyEquivalent: "")
+        let tieParent = NSMenuItem(title: L10n.tr("Tie / Bow Tie 👔", "领带 / 领结配饰 👔"), action: nil, keyEquivalent: "")
         tieParent.submenu = tieMenu
         menu.addItem(tieParent)
 
         // Desk Peripherals / Apple Laptop submenu
         let deskMenu = NSMenu()
         for mode in DeskSetupMode.allCases {
-            let item = NSMenuItem(title: mode.rawValue, action: #selector(selectDeskSetupMode(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: mode.displayName, action: #selector(selectDeskSetupMode(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = mode.rawValue
             item.state = (settings.deskSetupMode == mode) ? .on : .off
@@ -295,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         deskMenu.addItem(.separator())
         let laptopColorHeader = NSMenuItem(
-            title: "Apple 设备配色 (检测到: \(hw.detectedLaptopColor.displayName))",
+            title: L10n.tr("Apple Finish (Detected: \(hw.detectedLaptopColor.displayName))", "Apple 设备配色 (检测到: \(hw.detectedLaptopColor.displayName))"),
             action: nil,
             keyEquivalent: ""
         )
@@ -305,46 +340,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if opt == .neoBlush || opt == .imacBlue {
                 deskMenu.addItem(.separator())
             }
-            let item = NSMenuItem(title: opt.rawValue, action: #selector(selectMacBookColor(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: opt.displayName, action: #selector(selectMacBookColor(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = opt.rawValue
             item.state = (settings.macBookColorOption == opt) ? .on : .off
             deskMenu.addItem(item)
         }
-        let deskParent = NSMenuItem(title: "桌面外设 / 笔记本 💻", action: nil, keyEquivalent: "")
+        let deskParent = NSMenuItem(title: L10n.tr("Desk Peripherals / MacBook 💻", "桌面外设 / 笔记本 💻"), action: nil, keyEquivalent: "")
         deskParent.submenu = deskMenu
         menu.addItem(deskParent)
 
         // Late-Night Tired Eyes submenu
         let tiredMenu = NSMenu()
         for mode in TiredEyesMode.allCases {
-            let item = NSMenuItem(title: mode.rawValue, action: #selector(selectTiredEyesMode(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: mode.displayName, action: #selector(selectTiredEyesMode(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = mode.rawValue
             item.state = (settings.tiredEyesMode == mode) ? .on : .off
             tiredMenu.addItem(item)
         }
-        let tiredParent = NSMenuItem(title: "熬夜疲惫眼 🌙", action: nil, keyEquivalent: "")
+        let tiredParent = NSMenuItem(title: L10n.tr("Late-Night Tired Eyes 🌙", "熬夜疲惫眼 🌙"), action: nil, keyEquivalent: "")
         tiredParent.submenu = tiredMenu
         menu.addItem(tiredParent)
 
+        // Language / 语言 submenu
+        let langMenu = NSMenu()
+        for lang in AppLanguage.allCases {
+            let item = NSMenuItem(title: lang.displayName, action: #selector(selectLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = lang.rawValue
+            item.state = (L10n.language == lang) ? .on : .off
+            langMenu.addItem(item)
+        }
+        let langParent = NSMenuItem(title: "Language / 语言 🌐", action: nil, keyEquivalent: "")
+        langParent.submenu = langMenu
+        menu.addItem(langParent)
+
         menu.addItem(.separator())
 
-        let demoItem = NSMenuItem(title: "🎬 演示打字 + 摸猫动画", action: #selector(runDemoBurst), keyEquivalent: "")
+        let demoItem = NSMenuItem(title: L10n.tr("🎬 Demo Typing Burst", "🎬 演示打字 + 摸猫动画"), action: #selector(runDemoBurst), keyEquivalent: "")
         demoItem.target = self
         menu.addItem(demoItem)
 
-        let resetPosItem = NSMenuItem(title: "重置位置到右下角", action: #selector(resetPosition), keyEquivalent: "")
+        let resetPosItem = NSMenuItem(title: L10n.tr("Reset Position (Bottom-Right)", "重置位置到右下角"), action: #selector(resetPosition), keyEquivalent: "")
         resetPosItem.target = self
         menu.addItem(resetPosItem)
 
-        let relaunchItem = NSMenuItem(title: "重启 KuroCat (授权后刷新)", action: #selector(relaunchApp), keyEquivalent: "")
+        let relaunchItem = NSMenuItem(title: L10n.tr("Relaunch KuroCat", "重启 KuroCat (授权后刷新)"), action: #selector(relaunchApp), keyEquivalent: "")
         relaunchItem.target = self
         menu.addItem(relaunchItem)
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "退出 KuroCat", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L10n.tr("Quit KuroCat", "退出 KuroCat"), action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -508,6 +556,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let mode = TiredEyesMode(rawValue: raw) else { return }
         CatSettings.shared.tiredEyesMode = mode
+    }
+
+    @objc private func selectLanguage(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let lang = AppLanguage(rawValue: raw) else { return }
+        L10n.language = lang
+        CatEditorWindowController.shared.refreshLocalizedStrings()
     }
 
     @objc private func resetPosition() {
