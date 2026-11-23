@@ -456,7 +456,7 @@ func renderAllLiveDemos(to outDir: String) {
         if clicking != prevClick3 {
             prevClick3 = clicking
             if clicking { state.lastMouseClickTime = state.now }
-            physics.triggerMouseClick(button: 0, isDown: clicking)
+            physics.triggerMouseClick(button: 0, isDown: clicking, at: state.now)
         }
 
         var active = Set<PhysicalKey>()
@@ -820,7 +820,7 @@ func renderCustomShowcaseVideo(bgPath: String, outDir: String) {
             if clicking != prevClick {
                 prevClick = clicking
                 if clicking { state.lastMouseClickTime = state.now }
-                physics.triggerMouseClick(button: 0, isDown: clicking)
+                physics.triggerMouseClick(button: 0, isDown: clicking, at: state.now)
             }
 
             state.activeKeys = active

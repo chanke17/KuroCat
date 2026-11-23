@@ -28,6 +28,7 @@ enum class EyeColorTheme : int {
 };
 
 struct CatSettings {
+    bool showKeyLegends = true;
     bool showKeyBadges = true;
     bool footEasterEgg = true;
     bool petInteraction = true;
@@ -48,6 +49,7 @@ struct CatSettings {
             if (RegQueryValueExW(hKey, name, nullptr, nullptr, (LPBYTE)&val, &sz) == ERROR_SUCCESS) return val;
             return defVal;
         };
+        showKeyLegends   = readDword(L"ShowKeyLegends", 1) != 0;
         showKeyBadges    = readDword(L"ShowKeyBadges", 1) != 0;
         footEasterEgg    = readDword(L"FootEasterEgg", 1) != 0;
         petInteraction   = readDword(L"PetInteraction", 1) != 0;
@@ -71,6 +73,7 @@ struct CatSettings {
         auto writeDword = [&](const wchar_t* name, DWORD val) {
             RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         };
+        writeDword(L"ShowKeyLegends", showKeyLegends ? 1 : 0);
         writeDword(L"ShowKeyBadges", showKeyBadges ? 1 : 0);
         writeDword(L"FootEasterEgg", footEasterEgg ? 1 : 0);
         writeDword(L"PetInteraction", petInteraction ? 1 : 0);
@@ -221,7 +224,7 @@ public:
         }
     }
 
-    void triggerMouseClick(int button, bool isDown) {
+    void triggerMouseClick(int button, bool isDown, const CatSettings& settings) {
         sleepiness = 0.0f;
         if (isDown) {
             if (button == 0) {
@@ -233,6 +236,14 @@ public:
             }
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
+            if (settings.showKeyBadges && (button == 0 || button == 1)) {
+                Pt offset = mouseOffset.point();
+                Pt anchor = {
+                    MouseBaseCenter.x + offset.x + (button == 0 ? 22.0f : -22.0f),
+                    MouseBaseCenter.y + offset.y
+                };
+                spawnFloatingKeycap(button == 0 ? L"LMB" : L"RMB", anchor, nowSeconds());
+            }
         } else {
             if (button == 0) mousePressLeft.target = 0.0f;
             else mousePressRight.target = 0.0f;

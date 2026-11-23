@@ -30,6 +30,7 @@ enum class EyeColorTheme : int {
 };
 
 struct CatSettings {
+    bool showKeyLegends = true;
     bool showKeyBadges = true;
     bool footEasterEgg = true;
     bool petInteraction = true;
@@ -64,6 +65,7 @@ struct CatSettings {
             std::string v = line.substr(eq + 1);
             try {
                 if (k == "showKeyBadges") showKeyBadges = (std::stoi(v) != 0);
+                else if (k == "showKeyLegends") showKeyLegends = (std::stoi(v) != 0);
                 else if (k == "footEasterEgg") footEasterEgg = (std::stoi(v) != 0);
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
@@ -86,6 +88,7 @@ struct CatSettings {
         std::ofstream f(dir + "/config.ini");
         if (!f.is_open()) return;
         f << "showKeyBadges=" << (showKeyBadges ? 1 : 0) << "\n"
+          << "showKeyLegends=" << (showKeyLegends ? 1 : 0) << "\n"
           << "footEasterEgg=" << (footEasterEgg ? 1 : 0) << "\n"
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
@@ -226,7 +229,7 @@ public:
         }
     }
 
-    void triggerMouseClick(int button, bool isDown) {
+    void triggerMouseClick(int button, bool isDown, const CatSettings& settings) {
         sleepiness = 0.0f;
         if (isDown) {
             if (button == 0) {
@@ -238,6 +241,14 @@ public:
             }
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
+            if (settings.showKeyBadges && (button == 0 || button == 1)) {
+                Pt offset = mouseOffset.point();
+                Pt anchor = {
+                    MouseBaseCenter.x + offset.x + (button == 0 ? 22.0f : -22.0f),
+                    MouseBaseCenter.y + offset.y
+                };
+                spawnFloatingKeycap(button == 0 ? "LMB" : "RMB", anchor, nowSeconds());
+            }
         } else {
             if (button == 0) mousePressLeft.target = 0.0f;
             else mousePressRight.target = 0.0f;

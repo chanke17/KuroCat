@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CoreText
 import AppKit
 
 enum CatHitZone {
@@ -49,7 +50,7 @@ enum CatRenderer {
         }
 
         // Mini keyboard & mouse area (allows dragging by grabbing keyboard too)
-        let kbRect = CGRect(x: 58, y: 232, width: 236, height: 64)
+        let kbRect = CGRect(x: 58, y: 226, width: 236, height: 70)
         if kbRect.contains(p) {
             return .body
         }
@@ -72,8 +73,8 @@ enum CatRenderer {
         // 1. Mini White Mouse (left of keyboard)
         drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
 
-        // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
-        drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+        // 2. Compact Mac Keyboard + Dynamic Keycap Glow
+        drawKeyboard(in: ctx, physics: physics, settings: settings)
 
         // 3. Cat Tail (behind body)
         drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
@@ -205,14 +206,30 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    // MARK: - Mini Angled 65% Mechanical Keyboard (facing the cat!)
+    // MARK: - Compact Mac Keyboard (facing the cat)
 
-    private static func drawKeyboard(
-        in ctx: CGContext,
-        physics: CatPhysics,
-        theme: KeyboardTheme,
-        eyeTheme: EyeColorTheme
-    ) {
+    private static let keyLegends: [PhysicalKey: (line: CTLine, bounds: CGRect)] = {
+        var legends: [PhysicalKey: (line: CTLine, bounds: CGRect)] = [:]
+        for cap in KeyboardLayout.keycaps where cap.key != .space && cap.key != .touchID {
+            let label: String
+            switch cap.key {
+            case .escape: label = "esc"
+            case .fn: label = "fn"
+            case .grave: label = "`"
+            default: label = cap.key.badgeLabel
+            }
+            let fontSize: CGFloat = cap.frame.height < 0.1 ? 4.4 : (label.count == 1 ? 6.4 : 5.0)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
+                NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true
+            ]
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: attributes))
+            legends[cap.key] = (line, CTLineGetBoundsWithOptions(line, .useGlyphPathBounds))
+        }
+        return legends
+    }()
+
+    private static func drawKeyboard(in ctx: CGContext, physics: CatPhysics, settings: CatSettings) {
         let tl = KeyboardLayout.screenQuadPoint(su: -0.025, sv: -0.08)
         let tr = KeyboardLayout.screenQuadPoint(su: 1.025, sv: -0.08)
         let bl = KeyboardLayout.screenQuadPoint(su: -0.032, sv: 1.08)
@@ -241,7 +258,7 @@ enum CatRenderer {
         let keyBorderColor: NSColor
         let accentColor: NSColor
 
-        switch theme {
+        switch settings.keyboardTheme {
         case .classicMilk:
             baseColor = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
             deckColor = NSColor(calibratedRed: 0.14, green: 0.14, blue: 0.16, alpha: 1.0)
@@ -280,16 +297,21 @@ enum CatRenderer {
 
         // Individual keycaps — tight clean mechanical spacing matching the reference video
         let padU: CGFloat = 0.0028
-        let padV: CGFloat = 0.014
-        let glowBaseColor = eyeTheme.glowColor
+        let padV: CGFloat = 0.011
+        let glowBaseColor = settings.eyeTheme.glowColor
+        let textMatrix = ctx.textMatrix
+        let textPosition = ctx.textPosition
+        if settings.showKeyLegends {
+            ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        }
 
         for cap in KeyboardLayout.keycaps {
             let glow = physics.keyGlow[cap.key] ?? 0
             // 180° rotated to face the cat: su = 1 - u, sv = 1 - v
-            let su0 = (1.0 - (cap.xUnits + cap.widthUnits)) + padU
-            let su1 = (1.0 - cap.xUnits) - padU
-            let sv0 = (1.0 - CGFloat(cap.row + 1) / 5.0) + padV
-            let sv1 = (1.0 - CGFloat(cap.row) / 5.0) - padV
+            let su0 = 1.0 - cap.frame.maxX + padU
+            let su1 = 1.0 - cap.frame.minX - padU
+            let sv0 = 1.0 - cap.frame.maxY + padV
+            let sv1 = 1.0 - cap.frame.minY - padV
 
             let pressDy = glow * 1.9
             let kTL = offsetY(KeyboardLayout.screenQuadPoint(su: su0, sv: sv0), pressDy)
@@ -297,7 +319,8 @@ enum CatRenderer {
             let kBR = offsetY(KeyboardLayout.screenQuadPoint(su: su1, sv: sv1), pressDy)
             let kBL = offsetY(KeyboardLayout.screenQuadPoint(su: su0, sv: sv1), pressDy)
 
-            let kPath = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.6)
+            let radius = min(1.6, (kBL.y - kTL.y) * 0.24)
+            let kPath = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: radius)
 
             var fill = cap.isAmberAccent ? accentColor : keyColor
             if glow > 0.02 {
@@ -312,6 +335,32 @@ enum CatRenderer {
             ctx.setLineWidth(0.65)
             ctx.addPath(kPath)
             ctx.strokePath()
+
+            let center = CGPoint(x: (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25,
+                                 y: (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25)
+            if cap.key == .touchID {
+                ctx.setLineWidth(0.45)
+                ctx.strokeEllipse(in: CGRect(x: center.x - 2.4, y: center.y - 1.7, width: 4.8, height: 3.4))
+            } else if settings.showKeyLegends, let legend = keyLegends[cap.key] {
+                let brightness = 0.2126 * fill.redComponent + 0.7152 * fill.greenComponent + 0.0722 * fill.blueComponent
+                let angle = atan2(kTR.y - kTL.y, kTR.x - kTL.x)
+                ctx.saveGState()
+                ctx.translateBy(x: center.x, y: center.y)
+                ctx.rotate(by: .pi + angle)
+                ctx.scaleBy(x: 1, y: 0.9)
+                if brightness > 0.49 {
+                    ctx.setFillColor(red: 0.19, green: 0.17, blue: 0.14, alpha: 0.80)
+                } else {
+                    ctx.setFillColor(red: 0.88, green: 0.91, blue: 0.92, alpha: 0.80)
+                }
+                ctx.textPosition = CGPoint(x: -legend.bounds.midX, y: legend.bounds.midY)
+                CTLineDraw(legend.line, ctx)
+                ctx.restoreGState()
+            }
+        }
+        if settings.showKeyLegends {
+            ctx.textMatrix = textMatrix
+            ctx.textPosition = textPosition
         }
 
         // Signature soft chartreuse backlit glow halos on active keys!

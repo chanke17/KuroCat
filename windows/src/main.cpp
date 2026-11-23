@@ -51,7 +51,8 @@ enum MenuCmd : UINT {
     CMD_SCALE_150,
     CMD_DEMO_BURST,
     CMD_RESET_POS,
-    CMD_QUIT
+    CMD_QUIT,
+    CMD_TOGGLE_LEGENDS
 };
 
 struct AppState {
@@ -279,7 +280,8 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING | (app.settings.showKeyBadges ? MF_CHECKED : 0), CMD_TOGGLE_BADGES, L"\u663E\u793A\u6309\u952E\u6C14\u6CE1 ([S] [W] [\u21E7])");
+    AppendMenuW(menu, MF_STRING | (app.settings.showKeyLegends ? MF_CHECKED : 0), CMD_TOGGLE_LEGENDS, L"\u663E\u793A\u952E\u5E3D\u5B57\u7B26");
+    AppendMenuW(menu, MF_STRING | (app.settings.showKeyBadges ? MF_CHECKED : 0), CMD_TOGGLE_BADGES, L"\u663E\u793A\u952E\u76D8\u548C\u9F20\u6807\u6C14\u6CE1");
     AppendMenuW(menu, MF_STRING | (app.settings.footEasterEgg ? MF_CHECKED : 0), CMD_TOGGLE_FOOT, L"3\u952E\u540C\u65F6\u6309\u300C\u7528\u811A\u6309\u300D\u5F69\u86CB");
     AppendMenuW(menu, MF_STRING | (app.settings.petInteraction ? MF_CHECKED : 0), CMD_TOGGLE_PET, L"\u6478\u5934/\u6478\u80CC\u95ED\u773C\u4E92\u52A8");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -347,6 +349,10 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_TOGGLE_AUTOSTART:
             setAutoStartEnabled(!isAutoStartEnabled());
+            break;
+        case CMD_TOGGLE_LEGENDS:
+            app.settings.showKeyLegends = !app.settings.showKeyLegends;
+            app.settings.saveToRegistry();
             break;
         case CMD_TOGGLE_BADGES:
             app.settings.showKeyBadges = !app.settings.showKeyBadges;
@@ -644,7 +650,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
 
     app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
-    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down); };
+    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down, app.settings); };
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);

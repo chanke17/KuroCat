@@ -5,19 +5,20 @@ import CoreGraphics
 /// and CGEventTap (virtual key codes), ensuring full-state NKRO tracking in both
 /// normal typing (any IME) and games.
 enum PhysicalKey: String, Hashable, CaseIterable {
-    // Row 0: Number row
-    case escape, k1, k2, k3, k4, k5, k6, k7, k8, k9, k0, minus, equal, backspace
-    // Row 1: QWERTY
+    // Function row
+    case escape, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, touchID
+    // Number row
+    case grave, k1, k2, k3, k4, k5, k6, k7, k8, k9, k0, minus, equal, backspace
+    // QWERTY
     case tab, q, w, e, r, t, y, u, i, o, p, leftBracket, rightBracket, backslash
-    // Row 2: ASDF
+    // ASDF
     case capsLock, a, s, d, f, g, h, j, k, l, semicolon, quote, enter
-    // Row 3: ZXCV
-    case leftShift, z, x, c, v, b, n, m, comma, period, slash, rightShift, arrowUp
-    // Row 4: Modifiers & Space
-    case leftControl, leftOption, leftCommand, space, rightCommand, rightOption, fn, arrowLeft, arrowDown, arrowRight
-    // Extra function / nav keys (mapped cleanly onto top/edge key positions)
-    case grave, rightControl, forwardDelete
-    case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
+    // ZXCV
+    case leftShift, z, x, c, v, b, n, m, comma, period, slash, rightShift
+    // Modifiers, space and arrows
+    case fn, leftControl, leftOption, leftCommand, space, rightCommand, rightOption, arrowLeft, arrowUp, arrowDown, arrowRight
+    // Keys available on external keyboards
+    case rightControl, forwardDelete
 
     /// Short, clean keycap badge label matching mechanical keycap aesthetics.
     var badgeLabel: String {
@@ -97,27 +98,15 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case .f10: return "F10"
         case .f11: return "F11"
         case .f12: return "F12"
+        case .touchID: return ""
         }
     }
 
-    /// Which visual keycap on our 65% mini keyboard lights up when this key is pressed.
+    /// Match keys from external keyboards to their closest compact Mac equivalents.
     var visualKey: PhysicalKey {
         switch self {
-        case .grave: return .escape
         case .forwardDelete: return .backspace
-        case .rightControl: return .fn
-        case .f1: return .k1
-        case .f2: return .k2
-        case .f3: return .k3
-        case .f4: return .k4
-        case .f5: return .k5
-        case .f6: return .k6
-        case .f7: return .k7
-        case .f8: return .k8
-        case .f9: return .k9
-        case .f10: return .k0
-        case .f11: return .minus
-        case .f12: return .equal
+        case .rightControl: return .leftControl
         default: return self
         }
     }
@@ -128,11 +117,12 @@ enum PhysicalKey: String, Hashable, CaseIterable {
     /// viewer-right paw = cat's LEFT hand (WASD, Q-T, A-G, Z-B, Esc, 1-5, Tab, Caps, LShift).
     var prefersLeftPaw: Bool {
         switch self.visualKey {
-        case .escape, .k1, .k2, .k3, .k4, .k5, .k6,
+        case .escape, .f1, .f2, .f3, .f4, .f5, .f6,
+             .grave, .k1, .k2, .k3, .k4, .k5, .k6,
              .tab, .q, .w, .e, .r, .t,
              .capsLock, .a, .s, .d, .f, .g,
              .leftShift, .z, .x, .c, .v, .b,
-             .leftControl, .leftOption, .leftCommand,
+             .fn, .leftControl, .leftOption, .leftCommand,
              .space:
             return false // viewer-right paw (cat's left hand — zero arm crossing in WASD + Mouse gaming!)
         default:
@@ -337,77 +327,83 @@ enum PhysicalKey: String, Hashable, CaseIterable {
     }
 }
 
-/// Visual definition of a single keycap on the mini 65% mechanical keyboard.
+/// Position and size of a keycap in normalized, unrotated keyboard coordinates.
 struct VisualKeycap {
     let key: PhysicalKey
-    let row: Int
-    let xUnits: CGFloat      // start X in normalized [0..1] keyboard interior units
-    let widthUnits: CGFloat  // width in normalized [0..1] units
+    let frame: CGRect
     let isAmberAccent: Bool
-    /// Normalized center (u in 0..1, v in 0..1) inside the keyboard key-well
+
     var normalizedCenter: CGPoint {
-        let u = xUnits + widthUnits * 0.5
-        let v = (CGFloat(row) + 0.5) / 5.0
-        return CGPoint(x: u, y: v)
+        CGPoint(x: frame.midX, y: frame.midY)
     }
 }
 
-/// Complete 65% mini mechanical keyboard layout facing the cat (180° rotated relative to viewer),
-/// matching the reference video's Spacebar closest to the cat, amber Enter on left, and amber Esc at bottom-right!
+/// Compact US ANSI Mac layout, rotated 180° on the canvas to face the cat.
 enum KeyboardLayout {
     static let keycaps: [VisualKeycap] = {
+        let width: CGFloat = 15
+        let height: CGFloat = 6
+        let functionKeyWidth = (width - 1.5 - 1) / 12
         let rows: [[(PhysicalKey, CGFloat, Bool)]] = [
-            // Row 0: 15.0u total (Esc is amber -> lands at bottom-right corner when facing cat!)
             [
-                (.escape, 1.0, true), (.k1, 1.0, false), (.k2, 1.0, false), (.k3, 1.0, false),
+                (.escape, 1.5, true), (.f1, functionKeyWidth, false), (.f2, functionKeyWidth, false),
+                (.f3, functionKeyWidth, false), (.f4, functionKeyWidth, false), (.f5, functionKeyWidth, false),
+                (.f6, functionKeyWidth, false), (.f7, functionKeyWidth, false), (.f8, functionKeyWidth, false),
+                (.f9, functionKeyWidth, false), (.f10, functionKeyWidth, false), (.f11, functionKeyWidth, false),
+                (.f12, functionKeyWidth, false), (.touchID, 1.0, false)
+            ],
+            [
+                (.grave, 1.0, false), (.k1, 1.0, false), (.k2, 1.0, false), (.k3, 1.0, false),
                 (.k4, 1.0, false), (.k5, 1.0, false), (.k6, 1.0, false), (.k7, 1.0, false),
                 (.k8, 1.0, false), (.k9, 1.0, false), (.k0, 1.0, false), (.minus, 1.0, false),
                 (.equal, 1.0, false), (.backspace, 2.0, false)
             ],
-            // Row 1: 15.0u total
             [
                 (.tab, 1.5, false), (.q, 1.0, false), (.w, 1.0, false), (.e, 1.0, false),
                 (.r, 1.0, false), (.t, 1.0, false), (.y, 1.0, false), (.u, 1.0, false),
                 (.i, 1.0, false), (.o, 1.0, false), (.p, 1.0, false), (.leftBracket, 1.0, false),
                 (.rightBracket, 1.0, false), (.backslash, 1.5, false)
             ],
-            // Row 2: 15.0u total (Enter is amber -> lands on middle-left edge when facing cat!)
             [
                 (.capsLock, 1.75, false), (.a, 1.0, false), (.s, 1.0, false), (.d, 1.0, false),
                 (.f, 1.0, false), (.g, 1.0, false), (.h, 1.0, false), (.j, 1.0, false),
                 (.k, 1.0, false), (.l, 1.0, false), (.semicolon, 1.0, false), (.quote, 1.0, false),
                 (.enter, 2.25, true)
             ],
-            // Row 3: 15.0u total
             [
                 (.leftShift, 2.25, false), (.z, 1.0, false), (.x, 1.0, false), (.c, 1.0, false),
                 (.v, 1.0, false), (.b, 1.0, false), (.n, 1.0, false), (.m, 1.0, false),
                 (.comma, 1.0, false), (.period, 1.0, false), (.slash, 1.0, false),
-                (.rightShift, 1.75, false), (.arrowUp, 1.0, false)
+                (.rightShift, 2.75, false)
             ],
-            // Row 4: 15.0u total (Spacebar row -> lands on TOP row closest to the cat!)
             [
-                (.leftControl, 1.25, false), (.leftOption, 1.25, false), (.leftCommand, 1.25, false),
-                (.space, 6.25, false),
-                (.rightCommand, 1.0, false), (.rightOption, 1.0, false),
-                (.arrowLeft, 1.0, false), (.arrowDown, 1.0, false), (.arrowRight, 1.0, false)
+                (.fn, 1.0, false), (.leftControl, 1.0, false), (.leftOption, 1.0, false),
+                (.leftCommand, 1.25, false), (.space, 5.5, false),
+                (.rightCommand, 1.25, false), (.rightOption, 1.0, false)
             ]
         ]
 
         var result: [VisualKeycap] = []
-        let totalUnits: CGFloat = 15.0
         for (rowIdx, row) in rows.enumerated() {
             var cursor: CGFloat = 0
-            for (key, width, isAmber) in row {
+            for (key, keyWidth, isAmber) in row {
                 result.append(VisualKeycap(
                     key: key,
-                    row: rowIdx,
-                    xUnits: cursor / totalUnits,
-                    widthUnits: width / totalUnits,
+                    frame: CGRect(x: cursor / width, y: CGFloat(rowIdx) / height, width: keyWidth / width, height: 1 / height),
                     isAmberAccent: isAmber
                 ))
-                cursor += width
+                cursor += keyWidth
             }
+        }
+        let arrows: [(PhysicalKey, CGFloat, CGFloat)] = [
+            (.arrowLeft, 12, 5.5), (.arrowUp, 13, 5), (.arrowDown, 13, 5.5), (.arrowRight, 14, 5.5)
+        ]
+        for (key, x, y) in arrows {
+            result.append(VisualKeycap(
+                key: key,
+                frame: CGRect(x: x / width, y: y / height, width: 1 / width, height: 0.5 / height),
+                isAmberAccent: false
+            ))
         }
         return result
     }()
@@ -422,8 +418,8 @@ enum KeyboardLayout {
 
     /// Screen-space keyboard quad point (su in 0..1 left-to-right, sv in 0..1 top-to-bottom).
     static func screenQuadPoint(su: CGFloat, sv: CGFloat) -> CGPoint {
-        let topLeft = CGPoint(x: 109, y: 238)
-        let topRight = CGPoint(x: 281, y: 247)
+        let topLeft = CGPoint(x: 109, y: 233)
+        let topRight = CGPoint(x: 281, y: 242)
         let bottomLeft = CGPoint(x: 103, y: 282)
         let bottomRight = CGPoint(x: 286, y: 292)
 

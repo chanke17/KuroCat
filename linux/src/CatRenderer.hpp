@@ -48,7 +48,7 @@ public:
         };
 
         drawMouse(cr, physics, settings.keyboardTheme);
-        drawKeyboard(cr, physics, settings.keyboardTheme, settings.eyeTheme);
+        drawKeyboard(cr, physics, settings);
         drawTail(cr, seatX, seatY, physics, settings.coatTheme);
         drawEarsLayer(cr, headCenter, physics, settings.coatTheme);
         drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, settings.coatTheme);
@@ -227,7 +227,7 @@ private:
         cairo_close_path(cr);
     }
 
-    static void drawKeyboard(cairo_t* cr, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+    static void drawKeyboard(cairo_t* cr, const CatPhysics& physics, const CatSettings& settings) {
         Pt tl = KeyboardLayout::screenQuadPoint(-0.025f, -0.08f);
         Pt tr = KeyboardLayout::screenQuadPoint(1.025f, -0.08f);
         Pt bl = KeyboardLayout::screenQuadPoint(-0.032f, 1.08f);
@@ -240,10 +240,10 @@ private:
         cairo_fill(cr);
 
         RGBA baseCol, deckCol, keyCol, borderCol, accentCol;
-        if (theme == KeyboardTheme::MidnightHacker) {
+        if (settings.keyboardTheme == KeyboardTheme::MidnightHacker) {
             baseCol = {0.06, 0.06, 0.08, 1}; deckCol = {0.10, 0.11, 0.13, 1};
             keyCol = {0.21, 0.22, 0.25, 1}; borderCol = {0.11, 0.11, 0.13, 0.95}; accentCol = {0.77, 0.94, 0.25, 1};
-        } else if (theme == KeyboardTheme::RetroCream) {
+        } else if (settings.keyboardTheme == KeyboardTheme::RetroCream) {
             baseCol = {0.25, 0.24, 0.22, 1}; deckCol = {0.38, 0.36, 0.33, 1};
             keyCol = {0.90, 0.88, 0.82, 1}; borderCol = {0.68, 0.65, 0.60, 0.85}; accentCol = {0.88, 0.42, 0.24, 1};
         } else {
@@ -266,7 +266,11 @@ private:
 
         constexpr float padU = 0.0028f;
         constexpr float padV = 0.014f;
-        RGBA glowCol = eyePrimary(eyeTheme);
+        RGBA glowCol = eyePrimary(settings.eyeTheme);
+        if (settings.showKeyLegends) {
+            cairo_save(cr);
+            cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+        }
 
         for (const auto& cap : KeyboardLayout::keycaps()) {
             float glow = 0.0f;
@@ -293,7 +297,30 @@ private:
             setCol(cr, borderCol);
             cairo_set_line_width(cr, 0.7);
             cairo_stroke(cr);
+
+            if (settings.showKeyLegends && cap.key != PhysicalKey::Space) {
+                const auto label = keyBadgeLabel(cap.key);
+                const bool isAbbreviation = label.size() > 1 && static_cast<unsigned char>(label.front()) < 0x80;
+                Pt center = { (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25f,
+                              (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25f };
+                double brightness = 0.2126 * fill.r + 0.7152 * fill.g + 0.0722 * fill.b;
+                RGBA ink = brightness > 0.49 ? RGBA{0.19, 0.17, 0.14, 0.80} : RGBA{0.88, 0.91, 0.92, 0.80};
+                double angle = std::atan2(kTR.y - kTL.y, kTR.x - kTL.x);
+                cairo_save(cr);
+                cairo_translate(cr, center.x, center.y);
+                cairo_rotate(cr, PI + angle);
+                cairo_scale(cr, 1.0, 0.9);
+                cairo_set_font_size(cr, isAbbreviation ? 5.0 : 6.4);
+                cairo_text_extents_t ext;
+                cairo_text_extents(cr, label.c_str(), &ext);
+                setCol(cr, ink);
+                cairo_move_to(cr, -ext.width * 0.5 - ext.x_bearing, -ext.height * 0.5 - ext.y_bearing);
+                cairo_show_text(cr, label.c_str());
+                cairo_new_path(cr);
+                cairo_restore(cr);
+            }
         }
+        if (settings.showKeyLegends) cairo_restore(cr);
 
         // Backlit keycap glow halos
         for (const auto& kv : physics.keyGlow) {

@@ -233,7 +233,11 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
 
     addSep();
 
-    addCheck("显示按键气泡 ([S] [W] [⇧])", app.settings.showKeyBadges, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+    addCheck("显示键帽字符", app.settings.showKeyLegends, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        g_app->settings.showKeyLegends = gtk_check_menu_item_get_active(item);
+        g_app->settings.save();
+    }));
+    addCheck("显示键盘和鼠标气泡", app.settings.showKeyBadges, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
         g_app->settings.showKeyBadges = gtk_check_menu_item_get_active(item);
         g_app->settings.save();
     }));
@@ -508,7 +512,7 @@ int main(int argc, char** argv) {
     }
 
     app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
-    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down); };
+    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down, app.settings); };
     app.input.start();
 
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);

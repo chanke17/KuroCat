@@ -43,6 +43,9 @@ enum EyeColorTheme: String, CaseIterable {
 final class CatSettings {
     static let shared = CatSettings()
 
+    var showKeyLegends: Bool {
+        didSet { UserDefaults.standard.set(showKeyLegends, forKey: "KuroCat.ShowKeyLegends") }
+    }
     var showKeyBadges: Bool {
         didSet { UserDefaults.standard.set(showKeyBadges, forKey: "KuroCat.ShowKeyBadges") }
     }
@@ -73,6 +76,7 @@ final class CatSettings {
 
     private init() {
         let d = UserDefaults.standard
+        showKeyLegends = d.object(forKey: "KuroCat.ShowKeyLegends") as? Bool ?? true
         showKeyBadges = d.object(forKey: "KuroCat.ShowKeyBadges") as? Bool ?? true
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
@@ -293,7 +297,7 @@ final class CatPhysics {
         }
     }
 
-    func triggerMouseClick(button: Int, isDown: Bool) {
+    func triggerMouseClick(button: Int, isDown: Bool, at timestamp: CFTimeInterval? = nil) {
         sleepiness = 0
         if isDown {
             if button == 0 {
@@ -305,6 +309,14 @@ final class CatPhysics {
             }
             pupilScale.target = 1.12
             earTwitch.velocity -= 2.2
+            if CatSettings.shared.showKeyBadges && (button == 0 || button == 1) {
+                let offset = mouseOffset.point
+                let anchor = CGPoint(
+                    x: CatPhysics.mouseBaseCenter.x + offset.x + (button == 0 ? 22 : -22),
+                    y: CatPhysics.mouseBaseCenter.y + offset.y
+                )
+                spawnFloatingKeycap(label: button == 0 ? "LMB" : "RMB", near: anchor, now: timestamp ?? CACurrentMediaTime())
+            }
         } else {
             if button == 0 { mousePressLeft.target = 0 }
             else { mousePressRight.target = 0 }

@@ -141,7 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Features
-        let badgesItem = NSMenuItem(title: "显示按键气泡 ([S] [W] [⇧])", action: #selector(toggleKeyBadges), keyEquivalent: "")
+        let legendsItem = NSMenuItem(title: "显示键帽字符", action: #selector(toggleKeyLegends), keyEquivalent: "")
+        legendsItem.target = self
+        legendsItem.state = settings.showKeyLegends ? .on : .off
+        menu.addItem(legendsItem)
+
+        let badgesItem = NSMenuItem(title: "显示键盘和鼠标气泡", action: #selector(toggleKeyBadges), keyEquivalent: "")
         badgesItem.target = self
         badgesItem.state = settings.showKeyBadges ? .on : .off
         menu.addItem(badgesItem)
@@ -310,6 +315,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleAutoStart() {
         _ = setAutoStartEnabled(!isAutoStartEnabled())
+    }
+
+    @objc private func toggleKeyLegends() {
+        CatSettings.shared.showKeyLegends.toggle()
     }
 
     @objc private func toggleKeyBadges() {
