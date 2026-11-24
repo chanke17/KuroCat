@@ -46,6 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.overlayWindow.catView.physics.triggerMouseClick(button: button, isDown: isDown)
             }
         }
+        engine.onScroll = { [weak self] delta in
+            DispatchQueue.main.async {
+                self?.overlayWindow.catView.physics.triggerScroll(delta: delta)
+            }
+        }
         engine.start()
 
         setupStatusItem()

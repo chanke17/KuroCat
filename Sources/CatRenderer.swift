@@ -220,6 +220,23 @@ enum CatRenderer {
         ctx.addPath(wheelPath)
         ctx.fillPath()
 
+        // Wheel grip stripes that roll as you scroll
+        ctx.saveGState()
+        ctx.addPath(wheelPath)
+        ctx.clip()
+        ctx.setStrokeColor(borderColor.withAlphaComponent(0.38).cgColor)
+        ctx.setLineWidth(0.8)
+        let spacing: CGFloat = 2.8
+        let offset = physics.wheelPhase.truncatingRemainder(dividingBy: spacing)
+        var y = wheelRect.minY - spacing + (offset < 0 ? offset + spacing : offset)
+        while y < wheelRect.maxY + spacing {
+            ctx.move(to: CGPoint(x: wheelRect.minX, y: y))
+            ctx.addLine(to: CGPoint(x: wheelRect.maxX, y: y))
+            y += spacing
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
+
         // Outer crisp outline
         ctx.setStrokeColor(borderColor.cgColor)
         ctx.setLineWidth(1.7)

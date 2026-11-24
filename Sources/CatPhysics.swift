@@ -219,6 +219,15 @@ final class CatPhysics {
 
     // Paw mode flags (for crisp outline & posture rendering)
     private(set) var leftPawOnMouse = false
+    /// 0 = paw resting on the mouse's palm, 1 = toes on the scroll wheel.
+    var scrollReach = Spring1D(0)
+    /// Accumulated wheel roll in canvas points, drives the wheel stripes.
+    private(set) var wheelPhase: CGFloat = 0
+    private var lastScrollTime: CFTimeInterval = 0
+    /// Phase (radians) of the paw rubbing back and forth along the wheel while scrolling.
+    private var scrollStrokePhase: CGFloat = 0
+    /// How long the paw stays on the wheel after the last scroll event.
+    static let scrollHoldDuration: CFTimeInterval = 0.35
     private(set) var leftPawTyping = false
     private(set) var rightPawTyping = false
 
@@ -355,6 +364,26 @@ final class CatPhysics {
             if button == 0 { mousePressLeft.target = 0 }
             else { mousePressRight.target = 0 }
         }
+    }
+
+    /// Scrolling: the paw on the mini mouse reaches onto the wheel and flicks it a little.
+    func triggerScroll(delta: CGFloat, at timestamp: CFTimeInterval? = nil) {
+        guard delta != 0 else { return }
+        sleepiness = 0
+        let now = timestamp ?? CACurrentMediaTime()
+        // A new scroll gesture pops a "滚轮" badge, like clicks pop "左键"/"右键".
+        if now - lastScrollTime > 0.6 && CatSettings.shared.showMouseBadges {
+            let pt = CGPoint(x: CatPhysics.mouseBaseCenter.x + mouseOffset.point.x,
+                             y: CatPhysics.mouseBaseCenter.y + mouseOffset.point.y - 6)
+            spawnFloatingKeycap(label: "滚轮", near: pt, now: now)
+        }
+        lastScrollTime = now
+        // Roll the wheel's stripes. Each step stays under half the stripe spacing (2.8),
+        // otherwise fast scrolling makes the stripes appear to crawl backward.
+        wheelPhase += max(-1.1, min(1.1, delta * 0.25))
+        // Advance the paw's rubbing stroke along the wheel (direction follows the scroll).
+        let step = min(0.55, 0.12 + abs(delta) * 0.05)
+        scrollStrokePhase += delta > 0 ? step : -step
     }
 
     /// Called by the overlay window when cursor strokes across the cat's head or body.
@@ -568,6 +597,8 @@ final class CatPhysics {
         mouseOffset.step(dt: dt, stiffness: 120, damping: 16)
         mousePressLeft.step(dt: dt, stiffness: 400, damping: 24)
         mousePressRight.step(dt: dt, stiffness: 400, damping: 24)
+        scrollReach.target = (now - lastScrollTime < CatPhysics.scrollHoldDuration) ? 1 : 0
+        scrollReach.step(dt: dt, stiffness: 220, damping: 22)
 
         let liveMouseCenter = CGPoint(
             x: CatPhysics.mouseBaseCenter.x + mouseOffset.point.x,
@@ -580,7 +611,12 @@ final class CatPhysics {
             leftPawTyping = true
             leftPawOnMouse = false
         } else if mouseRecent && sleepiness < 0.3 {
-            leftPaw.target = CGPoint(x: liveMouseCenter.x + 2, y: liveMouseCenter.y - 3)
+            // While scrolling, slide from the palm rest (+2, -3) forward onto the wheel and rub
+            // back and forth along it. The wheel axis is the mouse's 0.22 rad tilt: (-0.22, 0.98).
+            let reach = max(0, min(1, scrollReach.value))
+            let stroke = sin(scrollStrokePhase) * 3.2 * reach
+            leftPaw.target = CGPoint(x: liveMouseCenter.x + 2 - reach * 3.0 - stroke * 0.22,
+                                     y: liveMouseCenter.y - 3 + reach * 5.0 + stroke * 0.98)
             leftPawTyping = false
             leftPawOnMouse = true
         } else {

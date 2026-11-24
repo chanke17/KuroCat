@@ -53,6 +53,7 @@ final class InputEngine {
     var onKeyDown: ((PhysicalKey) -> Void)?
     var onKeyUp: ((PhysicalKey) -> Void)?
     var onMouseClick: ((Int, Bool) -> Void)?   // button (0=L,1=R,2=Other), isDown
+    var onScroll: ((CGFloat) -> Void)?         // scroll delta in points (vertical, or horizontal if no vertical)
     var onStatusChanged: ((InputEngineStatus) -> Void)?
 
     private var lastModifierFlags: CGEventFlags = []
@@ -357,6 +358,11 @@ final class InputEngine {
             updateMouseButton(2, isDown: false)
         case .scrollWheel:
             lastMouseMoveTime = CACurrentMediaTime()
+            // Skip trackpad inertia (momentum) events so the paw stops when the fingers lift.
+            guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { break }
+            var delta = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+            if delta == 0 { delta = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2) }
+            if delta != 0 { onScroll?(CGFloat(delta)) }
         default:
             break
         }
