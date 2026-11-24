@@ -17,6 +17,21 @@
 
 ---
 
+## 🍴 About This Fork (v1.3.3-mmccqq.1)
+
+This is a fork of [chanke17/KuroCat](https://github.com/chanke17/KuroCat), based on upstream **v1.3.3**. It changes how the **macOS** cat reacts to your cursor and mouse; the Windows and Linux versions are unchanged from upstream.
+
+- **Deliberate petting**: the cat reacts after about **1 second** of stroking its head or back, not the instant the cursor passes over it. Slow strokes count, and short pauses (up to 0.6 s, such as lifting a finger off the trackpad) keep your progress.
+- **The keyboard isn't the cat**: moving the cursor over the mini keyboard no longer counts as petting. You can still drag the cat by its keyboard.
+- **Calmer hunting eyes**: the round boba pupils appear only after about **0.8 seconds** of continuous fast mouse movement, so ordinary cursor moves across the screen don't trigger them. Waving the mouse back and forth still does.
+- **Visible resting paws**: when idle, the cat's front paws rest on the keyboard's edge, with toe lines and each skin's paw color.
+
+The timings can be tuned in `Sources/CatPhysics.swift` (`petEngageDuration`, `petStrokeGap`, `huntArmDuration`, `huntGap`).
+
+This fork doesn't publish pre-built downloads. To use it, build from source with `./build.sh` (see [Download & Run](#-download--run)). A self-built app is ad-hoc signed, so after each rebuild, remove and re-add KuroCat in **System Settings → Privacy & Security → Input Monitoring**, then restart it.
+
+---
+
 ## ✨ Highlights
 
 - **🎮 Full-State Input Capture for Typing & Gaming (True NKRO)**
