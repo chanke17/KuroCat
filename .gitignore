@@ -1,2 +1,13 @@
-# Build output from ./build.sh
+.DS_Store
 KuroCat.app/
+LiveDemos/
+windows/*.exe
+windows/build/
+windows/*.obj
+windows/*.pdb
+linux/kurocat
+linux/*.deb
+linux/*.tar.gz
+preview.png
+preview_siamese.png
+*.log
