@@ -1041,6 +1041,13 @@ enum CatRenderer {
             ctx.addPath(CGPath(roundedRect: cuff, cornerWidth: 6.5, cornerHeight: 6.5, transform: nil))
             ctx.fillPath()
         }
+
+        // Plump paw resting on the keyboard's top edge, so the idle cat visibly has front paws.
+        let pawRect = CGRect(x: bottom.x - 9.5, y: bottom.y - 5, width: 19, height: 12)
+        let pawFill: NSColor = coat == .siamese ? siamesePoint : (patterned(coat) ? pawColor(coat) : limbColor(coat))
+        ctx.setFillColor(pawFill.cgColor)
+        ctx.fillEllipse(in: pawRect)
+
         let lineColor = (coat == .siamese) ? siameseOutline.withAlphaComponent(0.62) : creaseColor(coat)
         ctx.setStrokeColor(lineColor.cgColor)
         ctx.setLineWidth(1.45)
@@ -1058,6 +1065,19 @@ enum CatRenderer {
             to: CGPoint(x: bottom.x - sign * 6.0, y: bottom.y - 1),
             control: CGPoint(x: top.x - sign * 6.5, y: (top.y + bottom.y) * 0.5)
         )
+        ctx.strokePath()
+
+        // Paw outline (lower half only, so no line cuts across the leg) + two toe creases.
+        ctx.saveGState()
+        ctx.clip(to: CGRect(x: pawRect.minX - 2, y: bottom.y - 1, width: pawRect.width + 4, height: pawRect.height))
+        ctx.setLineWidth(1.3)
+        ctx.strokeEllipse(in: pawRect)
+        ctx.restoreGState()
+        for dx: CGFloat in [-3.3, 3.3] {
+            ctx.move(to: CGPoint(x: bottom.x + dx, y: pawRect.maxY - 4.2))
+            ctx.addLine(to: CGPoint(x: bottom.x + dx, y: pawRect.maxY - 1.4))
+        }
+        ctx.setLineWidth(1.2)
         ctx.strokePath()
         ctx.restoreGState()
     }
