@@ -61,8 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startRenderLoop()
 
         // Auto-check GitHub Releases for updates shortly after launch
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            self?.checkForUpdates(manual: false)
+        if Self.updateChecksEnabled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                self?.checkForUpdates(manual: false)
+            }
         }
     }
 
@@ -330,7 +332,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         relaunchItem.target = self
         menu.addItem(relaunchItem)
 
-        if let ver = availableUpdateVersion {
+        if !Self.updateChecksEnabled {
+            let versionItem = NSMenuItem(title: "版本 v\(currentAppVersion) (分支版，已关闭更新检查)", action: nil, keyEquivalent: "")
+            versionItem.isEnabled = false
+            menu.addItem(versionItem)
+        } else if let ver = availableUpdateVersion {
             let title = isUpdating ? "⏳ 正在下载更新 \(ver)..." : "🆕 发现新版本 \(ver) — 点击自动更新"
             let updateItem = NSMenuItem(title: title, action: #selector(openUpdateDownload), keyEquivalent: "")
             updateItem.target = self
@@ -505,6 +511,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Auto Update Checker & In-App Self-Updater
 
+    /// Off in this fork: the endpoints below serve the upstream app, and "updating" would
+    /// replace this fork with upstream's build. Kept as a switch so upstream merges stay simple.
+    private static let updateChecksEnabled = false
+
     private static let updatePageURLString = "https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L"
     private static let updateVersionJSONURLString = "https://kurocat-download.app.workbuddy.host/version.json?sharecode=JVAABIVZ7L"
     private static let defaultMacAssetURLString = "https://kurocat-download.app.workbuddy.host/downloads/KuroCat-macOS-universal.zip?sharecode=JVAABIVZ7L"
@@ -560,6 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func checkForUpdates(manual: Bool) {
+        guard Self.updateChecksEnabled else { return }
         fetchUpdateEndpoint(Self.updateVersionJSONURLString) { [weak self] primary in
             guard let self else { return }
             if let info = primary {
