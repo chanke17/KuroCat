@@ -17,7 +17,7 @@
 
 ---
 
-## 🍴 关于这个分支（v1.3.3-mmccqq.1）
+## 🍴 关于这个分支
 
 本仓库是 [chanke17/KuroCat](https://github.com/chanke17/KuroCat) 的分支（fork），基于上游 **v1.3.3**。改动只针对 **macOS** 版小猫对光标和鼠标的反应；Windows 和 Linux 版与上游相同。
 
@@ -25,10 +25,20 @@
 - **键盘不算猫身**：光标在小键盘上移动不再触发摸猫，但仍然可以按住键盘拖动小猫。
 - **捕猎大圆眼不再一碰就触发**：需要持续快速移动鼠标约 **0.8 秒** 瞳孔才会变圆，平时把光标划过屏幕不会触发；来回快速晃动鼠标依然可以。
 - **待机时露出小爪子**：空闲时两只前爪搭在键盘边缘，带脚趾线条，颜色随皮肤变化。
+- **滚动时爪子拨滚轮**：滚动页面时，搭在小鼠标上的爪子会伸到滚轮上，跟着节奏来回拨动，滚轮条纹也会转动，并像点击一样弹出「滚轮」气泡。
+- **关闭了更新检查**：不再连接上游的更新服务器，所以不会提示“更新”成官方版本而把本分支覆盖掉。想更新请拉取本仓库后重新构建。
 
-触发时间可在 `Sources/CatPhysics.swift` 中调整（`petEngageDuration`、`petStrokeGap`、`huntArmDuration`、`huntGap`）。
+触发时间可在 `Sources/CatPhysics.swift` 中调整（`petEngageDuration`、`petStrokeGap`、`huntArmDuration`、`huntGap`、`scrollHoldDuration`）。
 
-本分支不提供预编译下载，请用 `./build.sh` 从源码构建（见下方“下载与运行”）。自行构建的应用是临时签名（ad-hoc），每次重新构建后，需要在 **系统设置 → 隐私与安全性 → 输入监控** 中移除并重新添加 KuroCat，然后重启它。
+本分支不提供预编译下载，请用 `./build.sh` 从源码构建（见下方“下载与运行”）。
+
+macOS 按应用的代码签名记住「输入监控」权限。想让权限在重新构建后保留，请在构建前运行一次：
+
+```bash
+bash scripts/create-macos-signing-cert.sh
+```
+
+它会在「登录」钥匙串里创建一张免费的自签名证书「KuroCat Code Signing」（备份在 `~/KuroCat-signing`，请妥善保存，不要上传），之后 `./build.sh` 每次都用它签名。如果没有这张证书，构建出来的是临时签名（ad-hoc），每次重新构建后都要在 **系统设置 → 隐私与安全性 → 输入监控** 中移除并重新添加 KuroCat，然后重启它。
 
 ---
 

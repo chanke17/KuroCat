@@ -17,7 +17,7 @@
 
 ---
 
-## 🍴 About This Fork (v1.3.3-mmccqq.1)
+## 🍴 About This Fork
 
 This is a fork of [chanke17/KuroCat](https://github.com/chanke17/KuroCat), based on upstream **v1.3.3**. It changes how the **macOS** cat reacts to your cursor and mouse; the Windows and Linux versions are unchanged from upstream.
 
@@ -25,10 +25,20 @@ This is a fork of [chanke17/KuroCat](https://github.com/chanke17/KuroCat), based
 - **The keyboard isn't the cat**: moving the cursor over the mini keyboard no longer counts as petting. You can still drag the cat by its keyboard.
 - **Calmer hunting eyes**: the round boba pupils appear only after about **0.8 seconds** of continuous fast mouse movement, so ordinary cursor moves across the screen don't trigger them. Waving the mouse back and forth still does.
 - **Visible resting paws**: when idle, the cat's front paws rest on the keyboard's edge, with toe lines and each skin's paw color.
+- **Paw on the scroll wheel**: when you scroll, the paw on the mini mouse reaches onto the wheel and rubs it back and forth in rhythm, the wheel's stripes roll, and a "滚轮" (scroll wheel) badge pops up like the click badges.
+- **No update check**: the app no longer checks upstream's update server, so it never offers to replace this fork with the official release. To update, pull this repository and rebuild.
 
-The timings can be tuned in `Sources/CatPhysics.swift` (`petEngageDuration`, `petStrokeGap`, `huntArmDuration`, `huntGap`).
+The timings can be tuned in `Sources/CatPhysics.swift` (`petEngageDuration`, `petStrokeGap`, `huntArmDuration`, `huntGap`, `scrollHoldDuration`).
 
-This fork doesn't publish pre-built downloads. To use it, build from source with `./build.sh` (see [Download & Run](#-download--run)). A self-built app is ad-hoc signed, so after each rebuild, remove and re-add KuroCat in **System Settings → Privacy & Security → Input Monitoring**, then restart it.
+This fork doesn't publish pre-built downloads. To use it, build from source with `./build.sh` (see [Download & Run](#-download--run)).
+
+macOS remembers the Input Monitoring permission by the app's code signature. To keep it across rebuilds, run this once before building:
+
+```bash
+bash scripts/create-macos-signing-cert.sh
+```
+
+It creates a free self-signed "KuroCat Code Signing" certificate in your login keychain (with a private backup in `~/KuroCat-signing`; never upload it), and `./build.sh` signs every build with it. Without it, builds are ad-hoc signed, and after each rebuild you must remove and re-add KuroCat in **System Settings → Privacy & Security → Input Monitoring**, then restart it.
 
 ---
 
