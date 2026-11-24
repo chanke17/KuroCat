@@ -119,15 +119,36 @@ echo "==> Creating Universal binary (arm64 + x86_64)..."
 lipo -create "$TMP_BIN_DIR/${APP_NAME}_arm64" "$TMP_BIN_DIR/${APP_NAME}_x86_64" -output "$MACOS_DIR/$APP_NAME"
 lipo -info "$MACOS_DIR/$APP_NAME"
 
-# Prefer a real local Apple Development certificate so macOS TCC preserves Input Monitoring
-# permission permanently across future rebuilds! Fallback to ad-hoc only if none exists.
-DEV_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development:/{print $2; exit}')"
-if [ -n "$DEV_IDENTITY" ]; then
-    echo "==> Signing with persistent certificate: $DEV_IDENTITY"
-    codesign --force --deep --sign "$DEV_IDENTITY" "$APP_BUNDLE"
+# Keep a consistent signing identity across builds so macOS keeps the Input Monitoring grant.
+# (Ported from upstream v1.3.4.) Order of preference:
+#   1. $KUROCAT_SIGN_IDENTITY
+#   2. Developer ID Application certificate in the keychain
+#   3. Self-signed "KuroCat Code Signing" certificate (create once: scripts/create-macos-signing-cert.sh)
+#   4. Apple Development certificate
+#   5. Ad-hoc (last resort: permission is lost on every rebuild)
+SIGN_IDENTITY="${KUROCAT_SIGN_IDENTITY:-}"
+if [ -z "$SIGN_IDENTITY" ]; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application:/{print $2; exit}')"
+fi
+if [ -z "$SIGN_IDENTITY" ]; then
+    if security find-identity -p codesigning 2>/dev/null | grep -q '"KuroCat Code Signing"'; then
+        SIGN_IDENTITY="KuroCat Code Signing"
+    fi
+fi
+if [ -z "$SIGN_IDENTITY" ]; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development:/{print $2; exit}')"
+fi
+
+if [ -n "$SIGN_IDENTITY" ]; then
+    echo "==> Signing with stable certificate: $SIGN_IDENTITY"
+    codesign --force --deep --sign "$SIGN_IDENTITY" --identifier "com.chanke.kurocat" "$APP_BUNDLE"
 else
-    echo "==> Signing ad-hoc (no Apple Development cert found)"
+    echo "==> WARNING: no stable signing certificate found — signing ad-hoc." >&2
+    echo "    Input Monitoring must be re-enabled after EVERY rebuild." >&2
+    echo "    Run scripts/create-macos-signing-cert.sh once to fix this." >&2
     codesign --force --deep --sign - --identifier "com.chanke.kurocat" "$APP_BUNDLE"
 fi
+echo "==> Designated requirement (what macOS uses to recognise KuroCat across rebuilds):"
+codesign -d -r- "$APP_BUNDLE" 2>&1 | grep -i designated || true
 
 echo "==> Built successfully: $APP_BUNDLE"
