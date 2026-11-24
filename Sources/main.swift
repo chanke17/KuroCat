@@ -5,14 +5,20 @@ import AppKit
 if let idx = CommandLine.arguments.firstIndex(of: "--render-preview"),
    idx + 1 < CommandLine.arguments.count {
     let outPath = CommandLine.arguments[idx + 1]
-    renderPreviewSheet(to: outPath, forceSiamese: false)
+    renderPreviewSheet(to: outPath, coat: .classicBlack)
     exit(0)
 }
 
 if let idx = CommandLine.arguments.firstIndex(of: "--render-siamese-preview"),
    idx + 1 < CommandLine.arguments.count {
     let outPath = CommandLine.arguments[idx + 1]
-    renderPreviewSheet(to: outPath, forceSiamese: true)
+    renderPreviewSheet(to: outPath, coat: .siamese)
+    exit(0)
+}
+
+if let idx = CommandLine.arguments.firstIndex(of: "--render-tabby-preview"),
+   idx + 1 < CommandLine.arguments.count {
+    renderPreviewSheet(to: CommandLine.arguments[idx + 1], coat: .tabby)
     exit(0)
 }
 
@@ -33,19 +39,13 @@ if let idx = CommandLine.arguments.firstIndex(of: "--render-showcase-video"),
     exit(0)
 }
 
-func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
+func renderPreviewSheet(to path: String, coat: CatCoatTheme) {
     let prevCoat = CatSettings.shared.coatTheme
     let prevEye = CatSettings.shared.eyeTheme
     let prevKb = CatSettings.shared.keyboardTheme
-    if forceSiamese {
-        CatSettings.shared.coatTheme = .siamese
-        CatSettings.shared.eyeTheme = .siameseBlue
-        CatSettings.shared.keyboardTheme = .classicMilk
-    } else {
-        CatSettings.shared.coatTheme = .classicBlack
-        CatSettings.shared.eyeTheme = .neonChartreuse
-        CatSettings.shared.keyboardTheme = .classicMilk
-    }
+    CatSettings.shared.coatTheme = coat
+    CatSettings.shared.eyeTheme = coat.defaultEyeTheme
+    CatSettings.shared.keyboardTheme = .classicMilk
     defer {
         CatSettings.shared.coatTheme = prevCoat
         CatSettings.shared.eyeTheme = prevEye
@@ -84,7 +84,7 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
     }
 
     let scenarios: [(String, (CatPhysics) -> Void)] = [
-        ("1. Idle (Seamless Thick Neck)", { p in
+        ("1. Idle", { p in
             p.leftPaw.x.value = CatPhysics.leftPawRest.x
             p.leftPaw.y.value = CatPhysics.leftPawRest.y
             p.rightPaw.x.value = CatPhysics.rightPawRest.x
@@ -94,7 +94,7 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             p.eyeGaze.x.value = 0
             p.eyeGaze.y.value = 0
         }),
-        ("2. 2.5D Head Turn Left-Up", { p in
+        ("2. Look Up Left", { p in
             p.leftPaw.x.value = CatPhysics.mouseBaseCenter.x + 2
             p.leftPaw.y.value = CatPhysics.mouseBaseCenter.y - 3
             p.bodyShiftX.value = -9
@@ -105,7 +105,7 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             p.eyeGaze.x.value = -0.78
             p.eyeGaze.y.value = -0.58
         }),
-        ("3. 2.5D Head Turn Right-Down", { p in
+        ("3. Look Down Right", { p in
             let burst: [PhysicalKey] = [.j, .o, .e, .a]
             for (i, k) in burst.enumerated() {
                 p.triggerKeyDown(k)
@@ -123,7 +123,7 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             p.eyeGaze.x.value = 0.65
             p.eyeGaze.y.value = 0.72
         }),
-        ("4. Hunting Mode! (Round Boba Eyes)", { p in
+        ("4. Hunting", { p in
             p.leftPaw.x.value = CatPhysics.mouseBaseCenter.x + 2
             p.leftPaw.y.value = CatPhysics.mouseBaseCenter.y - 3
             p.huntIntensity.value = 1.0
@@ -136,7 +136,7 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             p.eyeGaze.x.value = -0.50
             p.eyeGaze.y.value = -0.22
         }),
-        ("5. Gaming 3-Key + Hind Foot!", { p in
+        ("5. Three-Key Combo", { p in
             p.triggerKeyDown(.w)
             p.triggerKeyDown(.leftShift)
             p.triggerKeyDown(.space)
@@ -152,7 +152,7 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             p.headPitch.value = 0.55
             p.eyeGaze.x.value = 0.15; p.eyeGaze.y.value = 0.60
         }),
-        ("6. Petting (Happy Closed Eyes)", { p in
+        ("6. Petting", { p in
             p.leftPaw.x.value = CatPhysics.mouseBaseCenter.x + 2
             p.leftPaw.y.value = CatPhysics.mouseBaseCenter.y - 3
             p.bodyShiftX.value = -7
@@ -192,11 +192,12 @@ func renderPreviewSheet(to path: String, forceSiamese: Bool = false) {
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white
         ]
+        let caption = NSAttributedString(string: label, attributes: attrs)
         ctx.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.72).cgColor)
-        ctx.fill(CGRect(x: 8, y: 8, width: 215, height: 22))
+        ctx.fill(CGRect(x: 8, y: 8, width: ceil(caption.size().width) + 12, height: 22))
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
-        NSAttributedString(string: label, attributes: attrs).draw(at: CGPoint(x: 14, y: 11))
+        caption.draw(at: CGPoint(x: 14, y: 11))
         NSGraphicsContext.restoreGraphicsState()
 
         ctx.restoreGState()

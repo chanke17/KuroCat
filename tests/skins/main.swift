@@ -23,6 +23,8 @@ func frame(_ coat: CatCoatTheme,_ eye:EyeColorTheme,_ state:Int,_ legacy:Bool = 
  case 2: p.headYaw.value = 1; p.headPitch.value = 0.65; p.headTilt.value = 0.13
  case 11:
   p.headYaw.value=CGFloat(pose % 3 - 1);p.headPitch.value=CGFloat(pose / 3 - 1)
+ case 12:
+  p.sleepiness=1;p.lieIntensity.value=pose == 0 ? 0.65 : 1
  case 10:
   p.headYaw.value=1;p.headPitch.value=1;p.headTilt.value=0.07
   p.eyeGaze.x.value=0.88;p.eyeGaze.y.value=0.85
@@ -78,16 +80,22 @@ for coat in [CatCoatTheme.siamese] {
   }
  }
 }
-for (name,coat) in [("shorthair",CatCoatTheme.shorthair),("orangeWhite",.orangeWhite)] {
+let patternedSkins: [(String, CatCoatTheme, EyeColorTheme)] = [
+ ("shorthair", .shorthair, .referenceHazel),
+ ("orangeWhite", .orangeWhite, .referenceHazel),
+ ("tabby", .tabby, CatCoatTheme.tabby.defaultEyeTheme),
+]
+for (name,coat,eye) in patternedSkins {
  for state in 0..<8 {
-  let c=frame(coat,.referenceHazel,state)
+  let c=frame(coat,eye,state)
   precondition(pixels(c).filter{$0 != 0}.count>10000,"Empty action render")
   save(c,"\(name)-\(state).png")
  }
 }
 for (name,coat) in [("black",CatCoatTheme.classicBlack),("siamese",.siamese)] {save(frame(coat,coat == .siamese ? .siameseBlue : .neonChartreuse,0),name+".png")}
 save(frame(.shorthair,.softAmber,0),"shorthair-amber.png")
-print("PASS: \(n) legacy skin/eye/action frames match upstream v1.3.5 above the keyboard and preserve keyboard appearance; rendered 16 new skin/action frames.")
+for pose in 0...1 {save(frame(.tabby,CatCoatTheme.tabby.defaultEyeTheme,12,false,pose),"tabby-curl-\(pose).png")}
+print("PASS: \(n) legacy skin/eye/action frames match upstream v1.3.5 above the keyboard and preserve keyboard appearance; rendered \(patternedSkins.count * 8) patterned skin/action frames.")
 
 for (name,coat) in [("shorthair",CatCoatTheme.shorthair),("orangeWhite",.orangeWhite)] {
  save(frame(coat,.softAmber,8),name+"-shoulder-after.png")
@@ -103,7 +111,7 @@ for coat in CatCoatTheme.allCases {
   }
  }
 }
-print("PASS: reaching arms leave the face unchanged across all four skins")
+print("PASS: reaching arms leave the face unchanged across all \(CatCoatTheme.allCases.count) skins")
 
 for coat in CatCoatTheme.allCases {
  for pose in 1...8 {
@@ -119,7 +127,7 @@ for coat in CatCoatTheme.allCases {
   }
  }
 }
-print("PASS: 32 extreme turn/tilt/squash poses preserve face pixels during mouse and typing actions")
+print("PASS: \(CatCoatTheme.allCases.count * 8) extreme turn/tilt/squash poses preserve face pixels during mouse and typing actions")
 
 precondition(EyeColorTheme.saved("淡金青绿（参考图）") == .referenceHazel)
 for eye in EyeColorTheme.allCases {precondition(EyeColorTheme.saved(eye.rawValue) == eye)}

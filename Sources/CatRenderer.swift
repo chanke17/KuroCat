@@ -10,27 +10,37 @@ enum CatHitZone {
 }
 
 enum CatRenderer {
-    private static func patterned(_ coat: CatCoatTheme) -> Bool { coat == .shorthair || coat == .orangeWhite }
+    private static func patterned(_ coat: CatCoatTheme) -> Bool {
+        coat == .shorthair || coat == .orangeWhite || coat == .tabby
+    }
     private static func rgb(_ hex: Int, _ alpha: CGFloat = 1) -> NSColor {
         NSColor(calibratedRed: CGFloat((hex >> 16) & 255)/255,
                 green: CGFloat((hex >> 8) & 255)/255, blue: CGFloat(hex & 255)/255, alpha: alpha)
     }
     private static func bodyColor(_ coat: CatCoatTheme) -> NSColor {
-        coat == .shorthair ? rgb(0xC2C5C1) : (coat == .orangeWhite ? rgb(0xF2EEE4) : catBlack)
+        switch coat {
+        case .shorthair: return rgb(0xC2C5C1)
+        case .orangeWhite: return rgb(0xF2EEE4)
+        case .tabby: return rgb(0x6F695D)
+        default: return catBlack
+        }
     }
     private static func limbColor(_ coat: CatCoatTheme) -> NSColor {
         coat == .orangeWhite ? rgb(0xD8AA73) : bodyColor(coat)
     }
     private static func pawColor(_ coat: CatCoatTheme) -> NSColor {
-        patterned(coat) ? rgb(0xF2EEE4) : (coat == .siamese ? siamesePoint : catBlack)
+        if coat == .tabby { return rgb(0x564A3E) }
+        return patterned(coat) ? rgb(0xF2EEE4) : (coat == .siamese ? siamesePoint : catBlack)
     }
     private static func earTailColor(_ coat: CatCoatTheme) -> NSColor {
         coat == .siamese ? siamesePoint : limbColor(coat)
     }
     private static func creaseColor(_ coat: CatCoatTheme) -> NSColor {
-        patterned(coat) ? rgb(0x8B8171, 0.60) : contourMint
+        if coat == .tabby { return rgb(0x554638, 0.70) }
+        return patterned(coat) ? rgb(0x8B8171, 0.60) : contourMint
     }
 
+    private static let tabbyStripe = rgb(0x373129)
     static let catBlack = NSColor(calibratedRed: 0.085, green: 0.085, blue: 0.095, alpha: 1.0)
     private static let blackOutlineWidth: CGFloat = 1.6
     private static let blackOutlineColor = NSColor(calibratedWhite: 1.0, alpha: 0.94)
@@ -877,9 +887,18 @@ enum CatRenderer {
             ctx.saveGState()
             ctx.addPath(line.copy(strokingWithWidth: 11, lineCap: .round, lineJoin: .round, miterLimit: 10))
             ctx.clip()
-            ctx.setStrokeColor(rgb(coat == .shorthair ? 0x55595A : 0xA57543, 0.50).cgColor)
-            ctx.setLineWidth(3.5); ctx.setLineCap(.butt)
-            for t: CGFloat in [0.50, 0.78] {
+            let rings: [CGFloat]
+            if coat == .tabby {
+                rings = [0.40, 0.58, 0.74, 0.93]
+                ctx.setStrokeColor(tabbyStripe.cgColor)
+                ctx.setLineWidth(4.0)
+            } else {
+                rings = [0.50, 0.78]
+                ctx.setStrokeColor(rgb(coat == .shorthair ? 0x55595A : 0xA57543, 0.50).cgColor)
+                ctx.setLineWidth(3.5)
+            }
+            ctx.setLineCap(.butt)
+            for t in rings {
                 let u = 1-t
                 let p = CGPoint(x: u*u*u*root.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*tip.x,
                                 y: u*u*u*root.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*tip.y)
@@ -887,6 +906,10 @@ enum CatRenderer {
                 let dy = 3*u*u*(c1.y-root.y)+6*u*t*(c2.y-c1.y)+3*t*t*(tip.y-c2.y)
                 let length = max(0.001, hypot(dx,dy)), nx = -dy/length*8, ny = dx/length*8
                 ctx.move(to: CGPoint(x:p.x+nx,y:p.y+ny)); ctx.addLine(to: CGPoint(x:p.x-nx,y:p.y-ny)); ctx.strokePath()
+            }
+            if coat == .tabby {
+                ctx.setFillColor(tabbyStripe.cgColor)
+                ctx.fillEllipse(in: CGRect(x: tip.x - 5.5, y: tip.y - 5.5, width: 11, height: 11))
             }
             ctx.restoreGState()
         }
@@ -1140,7 +1163,12 @@ enum CatRenderer {
             return CGPoint(x: head.x + projected.x*c - projected.y*s,
                            y: head.y + projected.x*s + projected.y*c)
         }
-        let sy = physics.bodySquash.value, sx = 1 + (1 - sy) * 0.55
+        let squash = physics.bodySquash.value
+        // Keep the tabby's torso markings attached when the body curls up.
+        let lie = coat == .tabby ? max(0, min(1, physics.lieIntensity.value)) : 0
+        let lieS = lie * lie * (3 - 2 * lie)
+        let sy = squash * (1 - lieS * 0.42)
+        let sx = (1 + (1 - squash) * 0.55) * (1 + lieS * 0.03)
         let c = cos(physics.bodyTilt.value), s = sin(physics.bodyTilt.value)
         return CGPoint(x: seatX + p.x*sx*c - p.y*sy*s,
                        y: seatY + p.x*sx*s + p.y*sy*c)
@@ -1306,7 +1334,7 @@ enum CatRenderer {
             ctx.restoreGState()
         }
 
-        if patterned(coat) { drawPatternedMuzzle(in: ctx, yawRad: yawRad, pitchRad: pitchRad) }
+        if patterned(coat) { drawPatternedMuzzle(in: ctx, yawRad: yawRad, pitchRad: pitchRad, coat: coat) }
         if physics.yawnAmount > 0.03 {
             drawYawnMouth(in: ctx, yawRad: yawRad, pitchRad: pitchRad, yawn: physics.yawnAmount, coat: coat)
         }
@@ -1427,7 +1455,7 @@ enum CatRenderer {
 
     // Small opaque nose and soft mouth on the existing white muzzle, below whiskers.
     // All control points share the head's yaw/pitch projection; the caller applies roll.
-    private static func drawPatternedMuzzle(in ctx: CGContext, yawRad: CGFloat, pitchRad: CGFloat) {
+    private static func drawPatternedMuzzle(in ctx: CGContext, yawRad: CGFloat, pitchRad: CGFloat, coat: CatCoatTheme) {
         let local: [CGPoint] = [CGPoint(x: -2.9, y: 8.5), CGPoint(x: -1.8, y: 8.1), CGPoint(x: 1.8, y: 8.1), CGPoint(x: 2.9, y: 8.5), CGPoint(x: 3.2, y: 8.9), CGPoint(x: 0.8, y: 12.1), CGPoint(x: 0, y: 12.3), CGPoint(x: -0.8, y: 12.1), CGPoint(x: -3.2, y: 8.9), CGPoint(x: -2.9, y: 8.5), CGPoint(x: -5.9, y: 14.4), CGPoint(x: -4.7, y: 18), CGPoint(x: -1.4, y: 18), CGPoint(x: 0, y: 14.3), CGPoint(x: 1.4, y: 18), CGPoint(x: 4.7, y: 18), CGPoint(x: 5.9, y: 14.4), CGPoint(x: 0, y: 12.0)]
         let p = local.map { projectHead3D(x: $0.x, y: $0.y, z: 30, yawRad: yawRad, pitchRad: pitchRad).pt }
         ctx.saveGState()
@@ -1437,9 +1465,9 @@ enum CatRenderer {
         nose.addCurve(to: p[6], control1: p[4], control2: p[5])
         nose.addCurve(to: p[9], control1: p[7], control2: p[8])
         nose.closeSubpath()
-        ctx.setFillColor(rgb(0xD98F9B).cgColor)
+        ctx.setFillColor((coat == .tabby ? rgb(0x5E493D) : rgb(0xD98F9B)).cgColor)
         ctx.addPath(nose); ctx.fillPath()
-        ctx.setStrokeColor(rgb(0x8B8C86, 0.78).cgColor)
+        ctx.setStrokeColor((coat == .tabby ? tabbyStripe : rgb(0x8B8C86, 0.78)).cgColor)
         ctx.setLineWidth(1.15); ctx.setLineCap(.round); ctx.setLineJoin(.round)
         ctx.move(to: p[17]); ctx.addLine(to: p[13])
         ctx.move(to: p[10]); ctx.addCurve(to: p[13], control1: p[11], control2: p[12])
@@ -1504,8 +1532,8 @@ enum CatRenderer {
         ctx.addPath(ear)
         ctx.fillPath()
 
-        // Cute warm dusty-cocoa inner ear hollow on Siamese so big ears look soft & unmistakably cat-like
-        if isSiamese {
+        // Inner ear follows the same projected ear geometry as it tilts or folds.
+        if isSiamese || coat == .tabby {
             let inI = CGPoint(x: innerBase3D.x + (tip3D.x - innerBase3D.x) * 0.24 + sign * 3.0,
                               y: innerBase3D.y + (tip3D.y - innerBase3D.y) * 0.16)
             let outI = CGPoint(x: outerBase3D.x + (tip3D.x - outerBase3D.x) * 0.20 - sign * 3.8,
@@ -1517,7 +1545,7 @@ enum CatRenderer {
             inner.addQuadCurve(to: tipI, control: CGPoint(x: (inI.x + tipI.x) * 0.5 - sign * 0.8, y: (inI.y + tipI.y) * 0.5))
             inner.addQuadCurve(to: outI, control: CGPoint(x: (outI.x + tipI.x) * 0.5 + sign * 1.2, y: (outI.y + tipI.y) * 0.5))
             inner.closeSubpath()
-            ctx.setFillColor(siameseInnerEar.cgColor)
+            ctx.setFillColor((isSiamese ? siameseInnerEar : rgb(0xB6A087)).cgColor)
             ctx.addPath(inner)
             ctx.fillPath()
         }
@@ -1730,7 +1758,13 @@ enum CatRenderer {
     ) {
         let wiggle = sin(physics.time * 4.5) * (max(physics.petHeadIntensity, physics.petBodyIntensity) * 1.2)
         ctx.saveGState()
-        let wColor = (coat == .siamese) ? siameseWhisker : (patterned(coat) ? rgb(0x8D8170) : whiskerColor).withAlphaComponent(0.68)
+        let wColor: NSColor
+        switch coat {
+        case .siamese: wColor = siameseWhisker
+        case .tabby: wColor = rgb(0xF0E4CD, 0.78)
+        case .shorthair, .orangeWhite: wColor = rgb(0x8D8170, 0.68)
+        case .classicBlack: wColor = whiskerColor.withAlphaComponent(0.68)
+        }
         ctx.setStrokeColor(wColor.cgColor)
         ctx.setLineWidth(1.0)
         ctx.setLineCap(.round)
@@ -1885,6 +1919,19 @@ enum CatRenderer {
             ctx.addPath(cuffPath)
             ctx.fillPath()
         }
+        if coat == .tabby {
+            ctx.setStrokeColor(tabbyStripe.cgColor)
+            ctx.setLineWidth(2.8)
+            ctx.setLineCap(.round)
+            for progress: CGFloat in [0.19, 0.43, 0.67] {
+                let x = top.x + (bottom.x - top.x) * progress
+                let y = top.y + (bottom.y - top.y) * progress
+                ctx.move(to: CGPoint(x: x - 6 * sign, y: y + 1.5))
+                ctx.addQuadCurve(to: CGPoint(x: x + 7 * sign, y: y),
+                                 control: CGPoint(x: x, y: y + 4))
+            }
+            ctx.strokePath()
+        }
         let lineColor = (coat == .siamese) ? siameseCrease : (coat == .classicBlack ? blackOutlineColor.withAlphaComponent(0.75) : creaseColor(coat))
         ctx.setStrokeColor(lineColor.cgColor)
         ctx.setLineWidth(1.45)
@@ -1967,7 +2014,23 @@ enum CatRenderer {
             }
             ctx.strokeEllipse(in: pawRect)
         }
-        if coat != .siamese {
+        if coat == .tabby {
+            ctx.setFillColor(limbColor(coat).cgColor)
+            ctx.addPath(limbPath)
+            ctx.fillPath()
+            // Span pairs of sampled edges so the bands bend with the limb.
+            ctx.setFillColor(tabbyStripe.cgColor)
+            for i in [4, 7, 10] {
+                ctx.move(to: leftEdge[i])
+                ctx.addLine(to: leftEdge[i + 1])
+                ctx.addLine(to: rightEdge[i + 2])
+                ctx.addLine(to: rightEdge[i + 1])
+                ctx.closePath()
+            }
+            ctx.fillPath()
+            ctx.setFillColor(pawColor(coat).cgColor)
+            ctx.fillEllipse(in: pawRect)
+        } else if coat != .siamese {
             ctx.setFillColor((patterned(coat) ? pawColor(coat) : limbColor(coat)).cgColor)
             ctx.addPath(limbPath)
             ctx.fillPath()

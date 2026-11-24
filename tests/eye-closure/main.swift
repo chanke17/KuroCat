@@ -57,4 +57,4 @@ for coat in CatCoatTheme.allCases {
     }
 }
 precondition(oldFringe > 0,"Fixture did not reproduce original defect")
-print("PASS: both eyes / four skins / all six eye themes; five legacy closure states; open eyes unchanged, covered pixels untouched, fully closed eyes invisible. Original contaminated pixels: \(oldFringe)")
+print("PASS: both eyes / \(CatCoatTheme.allCases.count) skins / \(EyeColorTheme.allCases.count) eye themes; five legacy closure states; open eyes unchanged, covered pixels untouched, fully closed eyes invisible. Original contaminated pixels: \(oldFringe)")

@@ -15,6 +15,17 @@ enum CatCoatTheme: String, CaseIterable {
     case siamese = "挖煤暹罗猫"
     case shorthair = "美短（银虎斑加白）"
     case orangeWhite = "橘白猫"
+    case tabby = "狸花猫"
+
+    var defaultEyeTheme: EyeColorTheme {
+        switch self {
+        case .classicBlack: return .neonChartreuse
+        case .siamese: return .siameseBlue
+        case .shorthair: return .referenceHazel
+        case .orangeWhite: return .warmAmber
+        case .tabby: return .softAmber
+        }
+    }
 }
 
 enum EyeColorTheme: String, CaseIterable {

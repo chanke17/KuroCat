@@ -370,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 case .siamese: coatTitle = "Siamese Cat"
                 case .shorthair: coatTitle = "Silver Tabby Shorthair"
                 case .orangeWhite: coatTitle = "Orange & White Cat"
+                case .tabby: coatTitle = "Brown Mackerel Tabby"
                 }
             } else {
                 coatTitle = coat.rawValue
@@ -664,16 +665,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let coat = CatCoatTheme(rawValue: raw) else { return }
         CatSettings.shared.coatTheme = coat
         // Auto-pair signature eye color (still freely overridable via 瞳色切换!)
-        switch coat {
-        case .classicBlack:
-            CatSettings.shared.eyeTheme = .neonChartreuse
-        case .siamese:
-            CatSettings.shared.eyeTheme = .siameseBlue
-        case .shorthair:
-            CatSettings.shared.eyeTheme = .referenceHazel
-        case .orangeWhite:
-            CatSettings.shared.eyeTheme = .warmAmber
-        }
+        CatSettings.shared.eyeTheme = coat.defaultEyeTheme
+        overlayWindow.catView.needsDisplay = true
     }
 
     @objc private func selectKeyboardTheme(_ sender: NSMenuItem) {
