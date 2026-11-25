@@ -93,6 +93,7 @@ SWIFT_SOURCES=(
     "$ROOT/Sources/CoatPatterns.swift"
     "$ROOT/Sources/OverlayWindow.swift"
     "$ROOT/Sources/AppDelegate.swift"
+    "$ROOT/Sources/AudioOutputMonitor.swift"
     "$ROOT/Sources/main.swift"
 )
 
@@ -103,6 +104,7 @@ COMMON_FLAGS=(
     -framework CoreGraphics
     -framework QuartzCore
     -framework IOKit
+    -framework CoreAudio
     -framework ApplicationServices
 )
 

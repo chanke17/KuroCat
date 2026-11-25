@@ -53,6 +53,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         engine.start()
 
+        // Sound output -> AirPods on (headphones) / off (speakers)
+        let audio = AudioOutputMonitor.shared
+        audio.onHeadphonesChange = { [weak self] isHeadphones, animated in
+            self?.overlayWindow.catView.physics.setHeadphonesConnected(isHeadphones, animated: animated)
+        }
+        audio.onPlayingChange = { [weak self] playing in
+            self?.overlayWindow.catView.physics.headphonesPlaying = playing
+        }
+        audio.start()
+
         setupStatusItem()
         if isAutoStartEnabled() {
             // Keep LaunchAgent path updated if user moved KuroCat.app into /Applications
@@ -257,6 +267,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         petItem.state = settings.petInteraction ? .on : .off
         menu.addItem(petItem)
 
+        let earbudItem = NSMenuItem(title: "连接耳机时戴上 AirPods 🎧", action: #selector(toggleEarbudAnimation), keyEquivalent: "")
+        earbudItem.target = self
+        earbudItem.state = settings.earbudAnimation ? .on : .off
+        menu.addItem(earbudItem)
+
         menu.addItem(.separator())
 
         // Scale submenu
@@ -447,6 +462,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func togglePetInteraction() {
         CatSettings.shared.petInteraction.toggle()
+    }
+
+    @objc private func toggleEarbudAnimation() {
+        CatSettings.shared.earbudAnimation.toggle()
     }
 
     @objc private func selectScale(_ sender: NSMenuItem) {

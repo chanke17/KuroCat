@@ -102,11 +102,12 @@ enum CatRenderer {
         drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
 
         // 4. 3D-Projected Ears (behind crown silhouette so Siamese seal-point ears emerge cleanly from cream skull!)
-        let headCenter = CGPoint(
-            x: seatX + physics.bodyTilt.value * 36 + physics.headYaw.value * 7.5,
-            y: 126 + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1
-        )
+        let headCenter = physics.headCenter
         drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat)
+        // AirPods on the far side of a turned head show only where they stick out past the silhouette.
+        if let pose = physics.earbudPose {
+            drawEarbuds(in: ctx, physics: physics, pose: pose, behindHead: true)
+        }
 
         // 5. Unified C1-Continuous Head + Neck + Pear Torso Silhouette + Siamese 2.5D Face Mask
         drawUnifiedSilhouette(
@@ -129,6 +130,11 @@ enum CatRenderer {
 
         // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / Siamese chocolate socks!)
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
+
+        // 8b. AirPods (in the ears, or held on top of the paws while putting them on / taking them off)
+        if let pose = physics.earbudPose {
+            drawEarbuds(in: ctx, physics: physics, pose: pose, behindHead: false)
+        }
 
         // 8. Floating Mechanical Keycap Badges (keyboard + mouse clicks)
         if !physics.floatingKeycaps.isEmpty {
@@ -678,7 +684,7 @@ enum CatRenderer {
 
     /// Projects a 3D point on the cat's head ellipsoid rotated by (yawRad, pitchRad)
     /// into 2D head-local coordinates — creating true Live2D-style 2.5D head turning!
-    private static func projectHead3D(
+    static func projectHead3D(
         x: CGFloat, y: CGFloat, z: CGFloat,
         yawRad: CGFloat, pitchRad: CGFloat
     ) -> (pt: CGPoint, z: CGFloat) {
@@ -984,10 +990,12 @@ enum CatRenderer {
         if lDist < 6.0 && !physics.leftPawOnMouse && !physics.leftPawTyping {
             drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - 18, y: seatY - 30), bottom: CGPoint(x: seatX - 16, y: seatY + 12), isLeft: true, coat: coat)
         } else {
-            let mid = CGPoint(
-                x: (leftShoulder.x + lPos.x) * 0.5 - (physics.leftPawOnMouse ? 8 : 4),
-                y: (leftShoulder.y + lPos.y) * 0.5 - 6
-            )
+            let mid = physics.isEarbudGesture
+                ? CGPoint(x: min(leftShoulder.x, lPos.x) - 22, y: (leftShoulder.y + lPos.y) * 0.5)
+                : CGPoint(
+                    x: (leftShoulder.x + lPos.x) * 0.5 - (physics.leftPawOnMouse ? 8 : 4),
+                    y: (leftShoulder.y + lPos.y) * 0.5 - 6
+                )
             drawLimb(
                 in: ctx,
                 start: leftShoulder,
@@ -1005,10 +1013,12 @@ enum CatRenderer {
         if rDist < 6.0 && !physics.rightPawTyping {
             drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + 18, y: seatY - 30), bottom: CGPoint(x: seatX + 16, y: seatY + 12), isLeft: false, coat: coat)
         } else {
-            let mid = CGPoint(
-                x: (rightShoulder.x + rPos.x) * 0.5 + 4,
-                y: (rightShoulder.y + rPos.y) * 0.5 - 6
-            )
+            let mid = physics.isEarbudGesture
+                ? CGPoint(x: max(rightShoulder.x, rPos.x) + 22, y: (rightShoulder.y + rPos.y) * 0.5)
+                : CGPoint(
+                    x: (rightShoulder.x + rPos.x) * 0.5 + 4,
+                    y: (rightShoulder.y + rPos.y) * 0.5 - 6
+                )
             drawLimb(
                 in: ctx,
                 start: rightShoulder,
@@ -1221,6 +1231,74 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
+    // MARK: - AirPods
+
+    /// Each bud is drawn twice at the same spot: once behind the head silhouette and once in front.
+    /// The front copy fades out as an in-ear bud turns to the far side, so it slips behind the head smoothly.
+    private static func drawEarbuds(in ctx: CGContext, physics: CatPhysics, pose: CatPhysics.EarbudPose, behindHead: Bool) {
+        for isLeft in [true, false] {
+            let sign: CGFloat = isLeft ? -1 : 1
+            let (ear, z) = physics.earbudAnchor3D(isLeft: isLeft)
+            let facing = CatPhysics.smoothstep(-16, -4, z)
+            let alpha = behindHead ? pose.alpha * pose.inEar : pose.alpha * (1 - pose.inEar * (1 - facing))
+            let paw = isLeft ? physics.leftPaw.point : physics.rightPaw.point
+            let offset = CatPhysics.earbudHoldOffset(isLeft: isLeft)
+            let held = CGPoint(x: paw.x + offset.x, y: paw.y + offset.y)
+            let t = pose.inEar
+            let pos = CGPoint(x: held.x + (ear.x - held.x) * t, y: held.y + (ear.y - held.y) * t)
+            // The stem points down and outward along the ear's outer edge (about 43°), held the same
+            // way in the paw so the bud doesn't spin as it goes in; in the ear it also tilts with the head.
+            let rotation = physics.headTilt.value * t - sign * CatRenderer.earbudStemAngle
+            drawAirPod(in: ctx, at: pos, isLeft: isLeft, rotation: rotation, scale: pose.scale, alpha: alpha)
+        }
+    }
+
+    static let earbudStemAngle: CGFloat = 0.75
+
+    /// One white AirPod: round bud with a short stem, drawn with a soft grey edge so it reads on every coat.
+    private static func drawAirPod(in ctx: CGContext, at p: CGPoint, isLeft: Bool, rotation: CGFloat, scale: CGFloat, alpha: CGFloat) {
+        guard alpha > 0.01, scale > 0.01 else { return }
+        let sign: CGFloat = isLeft ? -1 : 1
+        let white = rgb(0xF8F8F6), shade = rgb(0xD4D6D9), edge = rgb(0x7E8187, 0.95)
+        ctx.saveGState()
+        ctx.setAlpha(alpha)
+        ctx.translateBy(x: p.x, y: p.y)
+        ctx.rotate(by: rotation)
+        ctx.scaleBy(x: scale, y: scale)
+
+        // Stem: hangs straight down in local space; the caller's rotation sets its angle.
+        let stemEnd = CGPoint(x: 0, y: 12.5)
+        ctx.setLineCap(.round)
+        ctx.move(to: CGPoint(x: 0, y: 1)); ctx.addLine(to: stemEnd)
+        ctx.setStrokeColor(edge.cgColor); ctx.setLineWidth(4.9); ctx.strokePath()
+        ctx.move(to: CGPoint(x: 0, y: 1)); ctx.addLine(to: stemEnd)
+        ctx.setStrokeColor(white.cgColor); ctx.setLineWidth(3.3); ctx.strokePath()
+        // Microphone cap at the stem tip
+        ctx.setFillColor(shade.cgColor)
+        ctx.fillEllipse(in: CGRect(x: stemEnd.x - 1.3, y: stemEnd.y - 1.1, width: 2.6, height: 2.0))
+
+        // Bud
+        let bud = CGRect(x: -4.9, y: -4.6, width: 9.8, height: 9.0)
+        ctx.setFillColor(edge.cgColor)
+        ctx.fillEllipse(in: bud.insetBy(dx: -0.8, dy: -0.8))
+        ctx.setFillColor(white.cgColor)
+        ctx.fillEllipse(in: bud)
+        // Soft shading on the lower, face-side half + a dark speaker mesh peeking toward the ear
+        ctx.saveGState()
+        ctx.addEllipse(in: bud); ctx.clip()
+        ctx.setFillColor(shade.withAlphaComponent(0.85).cgColor)
+        ctx.fillEllipse(in: bud.offsetBy(dx: -sign * 2.6, dy: 2.6))
+        ctx.setFillColor(white.cgColor)
+        ctx.fillEllipse(in: bud.insetBy(dx: 1.2, dy: 1.2).offsetBy(dx: sign * 0.9, dy: -1.0))
+        ctx.restoreGState()
+        ctx.setFillColor(rgb(0x3A3C40, 0.85).cgColor)
+        ctx.fillEllipse(in: CGRect(x: sign * 1.4 - 1.2, y: -2.9, width: 2.4, height: 1.7))
+        // Highlight
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fillEllipse(in: CGRect(x: -sign * 1.8 - 1.0, y: -3.2, width: 2.0, height: 1.4))
+        ctx.restoreGState()
+    }
+
     // MARK: - Floating Mechanical Keycap Popups
 
     private static func drawFloatingKeycaps(in ctx: CGContext, physics: CatPhysics) {
@@ -1297,7 +1375,16 @@ enum CatRenderer {
             let alpha = sin(min(1.0, p) * .pi)
             ctx.saveGState()
             ctx.setAlpha(alpha * 0.85)
-            if sp.isSleepZ {
+            if let note = sp.note {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 12 + p * 2, weight: .bold),
+                    .foregroundColor: eyeTheme.primaryColor
+                ]
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+                NSAttributedString(string: note, attributes: attrs).draw(at: sp.position)
+                NSGraphicsContext.restoreGraphicsState()
+            } else if sp.isSleepZ {
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 11 + p * 3, weight: .bold),
                     .foregroundColor: eyeTheme.primaryColor

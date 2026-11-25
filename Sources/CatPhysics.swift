@@ -70,6 +70,9 @@ final class CatSettings {
     var petInteraction: Bool {
         didSet { UserDefaults.standard.set(petInteraction, forKey: "KuroCat.PetInteraction") }
     }
+    var earbudAnimation: Bool {
+        didSet { UserDefaults.standard.set(earbudAnimation, forKey: "KuroCat.EarbudAnimation") }
+    }
     var fullClickThrough: Bool {
         didSet { UserDefaults.standard.set(fullClickThrough, forKey: "KuroCat.FullClickThrough") }
     }
@@ -96,6 +99,7 @@ final class CatSettings {
         showKeyLegends = d.object(forKey: "KuroCat.ShowKeyLegends") as? Bool ?? true
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
+        earbudAnimation = d.object(forKey: "KuroCat.EarbudAnimation") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true
         let savedScale = d.double(forKey: "KuroCat.Scale")
@@ -164,8 +168,9 @@ struct PurrSparkle {
     var position: CGPoint
     var velocity: CGPoint
     var age: CGFloat = 0
-    let lifetime: CGFloat = 0.9
+    var lifetime: CGFloat = 0.9
     let isSleepZ: Bool
+    var note: String? = nil   // music note drawn as text while the cat wears its AirPods
 }
 
 struct ScriptedFrameInput {
@@ -228,6 +233,23 @@ final class CatPhysics {
     private var scrollStrokePhase: CGFloat = 0
     /// How long the paw stays on the wheel after the last scroll event.
     static let scrollHoldDuration: CFTimeInterval = 0.35
+
+    // AirPods: when the sound output switches to headphones, both paws lift two AirPods into the
+    // ears; when it switches back to speakers, the paws take them out and tuck them away.
+    enum EarbudPhase { case off, puttingOn, on, takingOff }
+    struct EarbudPose {
+        var inEar: CGFloat   // 0 = held in the paw, 1 = sitting in the ear
+        var scale: CGFloat
+        var alpha: CGFloat
+    }
+    private(set) var earbudPhase: EarbudPhase = .off
+    private(set) var earbudProgress: CGFloat = 0   // 0...1 through the current gesture
+    private var earbudPhaseStart: CFTimeInterval = 0
+    private var headphonesConnected = false
+    var headphonesPlaying = false
+    private var musicNoteCooldown: CGFloat = 0.6
+    static let earbudPutOnDuration: CFTimeInterval = 1.3
+    static let earbudTakeOffDuration: CFTimeInterval = 1.15
     private(set) var leftPawTyping = false
     private(set) var rightPawTyping = false
 
@@ -387,6 +409,120 @@ final class CatPhysics {
     }
 
     /// Called by the overlay window when cursor strokes across the cat's head or body.
+    /// The sound output switched to headphones (true) or back to speakers (false).
+    /// `animated: false` (at launch) just shows the final state without the paw gesture.
+    func setHeadphonesConnected(_ connected: Bool, animated: Bool = true) {
+        headphonesConnected = connected
+        if !animated {
+            earbudPhase = connected && CatSettings.shared.earbudAnimation ? .on : .off
+            earbudProgress = 0
+        }
+    }
+
+    var isEarbudGesture: Bool { earbudPhase == .puttingOn || earbudPhase == .takingOff }
+
+    /// Where each AirPod should be drawn, or nil when the cat has none.
+    var earbudPose: EarbudPose? {
+        let u = earbudProgress
+        switch earbudPhase {
+        case .off:
+            return nil
+        case .on:
+            return EarbudPose(inEar: 1, scale: 1, alpha: 1)
+        case .puttingOn:
+            // Pop into the paws, carried up, pressed into the ears around u = 0.40...0.52.
+            let pop = u < 0.16 ? CatPhysics.easeOutBack(u / 0.16) : 1
+            return EarbudPose(inEar: CatPhysics.smoothstep(0.40, 0.52, u), scale: pop, alpha: min(1, u / 0.06))
+        case .takingOff:
+            // Grabbed around u = 0.34...0.46, pulled out, then shrink away as the paws go back down.
+            let away = 1 - CatPhysics.smoothstep(0.62, 0.88, u)
+            return EarbudPose(inEar: 1 - CatPhysics.smoothstep(0.34, 0.46, u), scale: 0.35 + away * 0.65, alpha: away)
+        }
+    }
+
+    /// Head center in canvas space (shared with the renderer so paws and AirPods track the head).
+    var headCenter: CGPoint {
+        let breath = sin(time * 2.1) * 1.6
+        return CGPoint(
+            x: CatPhysics.seatAnchor.x + bodyShiftX.value + bodyTilt.value * 36 + headYaw.value * 7.5,
+            y: 126 + headOffsetY.value + headPitch.value * 4.8 + breath * 1.1
+        )
+    }
+
+    /// Canvas point where an AirPod sits: in the ear opening (the lower middle of the ear triangle,
+    /// just above where it meets the head), following the 2.5D head turn.
+    func earbudAnchor(isLeft: Bool) -> CGPoint { earbudAnchor3D(isLeft: isLeft).pt }
+
+    /// Same, plus depth: z < 0 means the bud has turned to the far side of the head.
+    func earbudAnchor3D(isLeft: Bool) -> (pt: CGPoint, z: CGFloat) {
+        let sign: CGFloat = isLeft ? -1 : 1
+        let p = CatRenderer.projectHead3D(x: sign * 23, y: -31, z: 0,
+                                          yawRad: headYaw.value * 0.50, pitchRad: headPitch.value * 0.36)
+        let c = cos(headTilt.value), s = sin(headTilt.value)
+        let hc = headCenter
+        return (CGPoint(x: hc.x + p.pt.x * c - p.pt.y * s, y: hc.y + p.pt.x * s + p.pt.y * c), p.z)
+    }
+
+    /// An AirPod held in a paw sits at the paw's inner top, so the paw stays outside the bud
+    /// (and the raised arm stays clear of the eyes).
+    static func earbudHoldOffset(isLeft: Bool) -> CGPoint { CGPoint(x: isLeft ? 8 : -8, y: -5) }
+
+    static func smoothstep(_ a: CGFloat, _ b: CGFloat, _ x: CGFloat) -> CGFloat {
+        let t = max(0, min(1, (x - a) / (b - a)))
+        return t * t * (3 - 2 * t)
+    }
+
+    static func easeOutBack(_ x: CGFloat) -> CGFloat {
+        let t = max(0, min(1, x)) - 1
+        return 1 + 2.4 * t * t * t + 1.4 * t * t
+    }
+
+    private func updateEarbudPhase(now: CFTimeInterval, dt: CGFloat) {
+        let wants = headphonesConnected && CatSettings.shared.earbudAnimation
+        switch earbudPhase {
+        case .off where wants, .on where !wants:
+            earbudPhase = wants ? .puttingOn : .takingOff
+            earbudPhaseStart = now
+            sleepiness = 0
+        case .puttingOn, .takingOff:
+            let duration = earbudPhase == .puttingOn ? CatPhysics.earbudPutOnDuration : CatPhysics.earbudTakeOffDuration
+            let previous = earbudProgress
+            earbudProgress = CGFloat(min(1, (now - earbudPhaseStart) / duration))
+            if earbudPhase == .puttingOn && previous < 0.5 && earbudProgress >= 0.5 {
+                earTwitch.velocity += 34   // ears flick as the buds go in
+            }
+            if earbudPhase == .takingOff && previous < 0.4 && earbudProgress >= 0.4 {
+                earTwitch.velocity -= 26
+            }
+            if earbudProgress >= 1 {
+                earbudPhase = earbudPhase == .puttingOn ? .on : .off
+                earbudProgress = 0
+                if earbudPhase == .off {
+                    for paw in [leftPaw.point, rightPaw.point] {   // little poof where they were tucked away
+                        sparkles.append(PurrSparkle(position: CGPoint(x: paw.x, y: paw.y - 8),
+                                                    velocity: CGPoint(x: 0, y: -20), isSleepZ: false))
+                    }
+                }
+            }
+        default:
+            break
+        }
+
+        // Music notes drift out of the ears while something is playing through the headphones.
+        if earbudPhase == .on && headphonesPlaying && sleepiness < 0.5 {
+            musicNoteCooldown -= dt
+            if musicNoteCooldown <= 0 {
+                musicNoteCooldown = CGFloat.random(in: 1.5...2.6)
+                let isLeft = Bool.random()
+                let sign: CGFloat = isLeft ? -1 : 1
+                let ear = earbudAnchor(isLeft: isLeft)
+                sparkles.append(PurrSparkle(position: CGPoint(x: ear.x + sign * 8 - 4, y: ear.y - 16),
+                                            velocity: CGPoint(x: sign * 13, y: -20),
+                                            lifetime: 1.7, isSleepZ: false, note: Bool.random() ? "♪" : "♫"))
+            }
+        }
+    }
+
     func registerPetStroke(canvasPoint: CGPoint, delta: CGFloat, isHead: Bool, at timestamp: CFTimeInterval? = nil) {
         guard CatSettings.shared.petInteraction else { return }
         let now = timestamp ?? CACurrentMediaTime()
@@ -519,6 +655,8 @@ final class CatPhysics {
             sleepiness = max(0, sleepiness - dt * 5.0)
         }
 
+        updateEarbudPhase(now: now, dt: dt)
+
         // 2b. Fast Mouse Movement -> Hunting / Stalking Mode (dilated round boba pupils + low crouch!)
         let mouseSpeed = hypot(curMouseVel.dx, curMouseVel.dy)
         let isFastMove = mouseSpeed > 460 && petHeadIntensity < 0.25 && petBodyIntensity < 0.25
@@ -632,6 +770,32 @@ final class CatPhysics {
         } else {
             rightPaw.target = CatPhysics.rightPawRest
             rightPawTyping = false
+        }
+
+        // AirPods gesture: both paws leave the keyboard/mouse, rise beside the head, press the buds
+        // into the ears (or pull them out), then return. Paw targets keep the held bud on the ear.
+        if isEarbudGesture {
+            let u = earbudProgress
+            let putting = earbudPhase == .puttingOn
+            let (up, atEar) = putting ? (u < 0.56, u >= 0.36) : (u < 0.56, u < 0.34)
+            for isLeft in [true, false] {
+                let sign: CGFloat = isLeft ? -1 : 1
+                let ear = earbudAnchor(isLeft: isLeft)
+                let offset = CatPhysics.earbudHoldOffset(isLeft: isLeft)
+                let hold = CGPoint(x: ear.x - offset.x, y: ear.y - offset.y)
+                let target: CGPoint
+                if !up {
+                    target = isLeft ? CatPhysics.leftPawRest : CatPhysics.rightPawRest
+                } else if atEar {
+                    target = hold
+                } else {
+                    target = CGPoint(x: hold.x + sign * 13, y: hold.y + 9)   // just outside the ear
+                }
+                if isLeft { leftPaw.target = target } else { rightPaw.target = target }
+            }
+            leftPawTyping = false
+            rightPawTyping = false
+            leftPawOnMouse = false
         }
 
         // Hind foot target (3rd simultaneous key!)

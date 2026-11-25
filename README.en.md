@@ -26,9 +26,10 @@ This is a fork of [chanke17/KuroCat](https://github.com/chanke17/KuroCat), based
 - **Calmer hunting eyes**: the round boba pupils appear only after about **0.8 seconds** of continuous fast mouse movement, so ordinary cursor moves across the screen don't trigger them. Waving the mouse back and forth still does.
 - **Visible resting paws**: when idle, the cat's front paws rest on the keyboard's edge, with toe lines and each skin's paw color.
 - **Paw on the scroll wheel**: when you scroll, the paw on the mini mouse reaches onto the wheel and rubs it back and forth in rhythm, the wheel's stripes roll, and a "滚轮" (scroll wheel) badge pops up like the click badges.
+- **AirPods for headphones**: when the sound output switches to headphones (Bluetooth, USB, or the headphone jack), the cat lifts both paws and puts a pair of AirPods in its ears, and ♪ notes drift out while something is playing. When the output switches back to the Mac's own speakers (or a monitor's speakers), it takes the AirPods out and tucks them away. Bluetooth speakers count as headphones too, because macOS reports them the same way. KuroCat reads only the output device's type, never any audio. Turn it off with **连接耳机时戴上 AirPods 🎧** in the menu.
 - **No update check**: the app no longer checks upstream's update server, so it never offers to replace this fork with the official release. To update, pull this repository and rebuild.
 
-The timings can be tuned in `Sources/CatPhysics.swift` (`petEngageDuration`, `petStrokeGap`, `huntArmDuration`, `huntGap`, `scrollHoldDuration`).
+The timings can be tuned in `Sources/CatPhysics.swift` (`petEngageDuration`, `petStrokeGap`, `huntArmDuration`, `huntGap`, `scrollHoldDuration`, `earbudPutOnDuration`, `earbudTakeOffDuration`).
 
 This fork doesn't publish pre-built downloads. To use it, build from source with `./build.sh` (see [Download & Run](#-download--run)).
 

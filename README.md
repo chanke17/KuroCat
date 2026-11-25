@@ -26,9 +26,10 @@
 - **捕猎大圆眼不再一碰就触发**：需要持续快速移动鼠标约 **0.8 秒** 瞳孔才会变圆，平时把光标划过屏幕不会触发；来回快速晃动鼠标依然可以。
 - **待机时露出小爪子**：空闲时两只前爪搭在键盘边缘，带脚趾线条，颜色随皮肤变化。
 - **滚动时爪子拨滚轮**：滚动页面时，搭在小鼠标上的爪子会伸到滚轮上，跟着节奏来回拨动，滚轮条纹也会转动，并像点击一样弹出「滚轮」气泡。
+- **戴上 AirPods 听歌**：声音输出切换到耳机（蓝牙耳机、USB 耳机或耳机孔）时，小猫会举起两只爪子，把两只 AirPods 塞进耳朵；正在播放声音时，耳边还会飘出 ♪ 音符。切回 Mac 自带扬声器（或显示器音箱）时，它会把 AirPods 摘下收起来。蓝牙音箱也会被当成耳机，因为 macOS 对两者的报告方式相同。只读取输出设备的类型，不会读取任何声音内容。可在菜单「连接耳机时戴上 AirPods 🎧」中关闭。
 - **关闭了更新检查**：不再连接上游的更新服务器，所以不会提示“更新”成官方版本而把本分支覆盖掉。想更新请拉取本仓库后重新构建。
 
-触发时间可在 `Sources/CatPhysics.swift` 中调整（`petEngageDuration`、`petStrokeGap`、`huntArmDuration`、`huntGap`、`scrollHoldDuration`）。
+触发时间可在 `Sources/CatPhysics.swift` 中调整（`petEngageDuration`、`petStrokeGap`、`huntArmDuration`、`huntGap`、`scrollHoldDuration`、`earbudPutOnDuration`、`earbudTakeOffDuration`）。
 
 本分支不提供预编译下载，请用 `./build.sh` 从源码构建（见下方“下载与运行”）。
 
