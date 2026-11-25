@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 final class RenderSettings {
  static let shared = RenderSettings()
+ let artworkCharacter = ArtworkCharacter.none
  var coatTheme = CatCoatTheme.classicBlack
  var eyeTheme = EyeColorTheme.neonChartreuse
  var keyboardTheme = KeyboardTheme.classicMilk

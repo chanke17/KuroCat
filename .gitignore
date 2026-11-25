@@ -11,3 +11,7 @@ linux/*.tar.gz
 preview.png
 preview_siamese.png
 *.log
+.build/
+dist/
+review/
+review-*/

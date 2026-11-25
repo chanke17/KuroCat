@@ -10,6 +10,9 @@ RES_DIR="$CONTENTS/Resources"
 
 echo "==> Building ${APP_NAME}.app..."
 mkdir -p "$MACOS_DIR" "$RES_DIR"
+if [ -d "$ROOT/Resources/CustomCharacters" ]; then
+    cp -R "$ROOT/Resources/CustomCharacters" "$RES_DIR/"
+fi
 
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 
@@ -86,6 +89,7 @@ PYEOF
 fi
 
 SWIFT_SOURCES=(
+    "$ROOT/Sources/ArtworkRenderer.swift"
     "$ROOT/Sources/KeyMap.swift"
     "$ROOT/Sources/InputEngine.swift"
     "$ROOT/Sources/CatPhysics.swift"

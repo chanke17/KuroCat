@@ -111,6 +111,10 @@ enum CatRenderer {
             return .permissionPill
         }
 
+        if CatSettings.shared.artworkCharacter != .none {
+            return ArtworkRenderer.hitTest(p, character: CatSettings.shared.artworkCharacter)
+        }
+
         let skin = CatSettings.shared.activeSkin
         if skin.renderStyle == .douni {
             let loaf = max(0, min(1, physics.douniLoafBlend.value))
@@ -203,6 +207,16 @@ enum CatRenderer {
             }
         }
         let skin = settings.activeSkin
+        if !isPreview && settings.artworkCharacter != .none,
+           ArtworkRenderer.draw(in: ctx, physics: physics, character: settings.artworkCharacter) {
+            if hasCanvasTransform { ctx.restoreGState() }
+            if showEdit {
+                drawEditOverlay(in: ctx, isEnglish: settings.isEnglish, scale: settings.scale)
+            }
+            if showPermissionPill { drawPermissionPill(in: ctx, text: permissionPillText) }
+            ctx.restoreGState()
+            return
+        }
         let breath = physics.breathingOffset
         let scruff = max(0, min(1, physics.scruffDrag.value))
         let lie = max(0, min(1, physics.lieIntensity.value))

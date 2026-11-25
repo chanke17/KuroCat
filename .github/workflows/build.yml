@@ -47,6 +47,9 @@ jobs:
       - name: Check coat artwork and native action regressions
         run: bash scripts/check-skins.sh
 
+      - name: Check Alfie artwork characters and native actions
+        run: bash scripts/check-artwork.sh
+
       - name: Check covered eye pixels
         run: bash scripts/check-eye-closure.sh
 

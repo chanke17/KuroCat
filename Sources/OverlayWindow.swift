@@ -215,7 +215,8 @@ final class CatCanvasView: NSView {
         let catPt = CatRenderer.canvasPointToCatSpace(pt, flipped: CatSettings.shared.flipHorizontal, rotationDeg: CatSettings.shared.rotationDeg)
         let showPill = InputEngine.shared.status.needsAttention
         let zone = CatRenderer.hitTest(point: catPt, physics: physics, showPermissionPill: showPill)
-        physics.updateTailHover(canvasPoint: catPt)
+        let character=CatSettings.shared.artworkCharacter
+        physics.updateTailHover(canvasPoint: character == .none ? catPt : ArtworkRenderer.nativeTailProbe(catPt, character: character))
 
         // Petting triggers strictly on the cat's head (never on keyboard or torso)!
         if zone == .head {
@@ -974,6 +975,10 @@ final class SettingsWindowController: NSWindowController {
             card.addSubview(makeLabel(tr("猫咪皮肤", "Cat Skin"), yPos: 4, width: 110))
             skinPopup = NSPopUpButton(frame: NSRect(x: 130, y: 9, width: 222, height: 24), pullsDown: false)
             skinIds = []
+            for character in [ArtworkCharacter.hood, .blob] {
+                skinPopup.addItem(withTitle: character.title)
+                skinIds.append("artwork:\(character.rawValue)")
+            }
             for coat in CatCoatTheme.allCases {
                 skinPopup.addItem(withTitle: s.isEnglish ? englishCoatName(coat) : coat.rawValue)
                 skinIds.append("coat:\(coat.rawValue)")
@@ -982,7 +987,9 @@ final class SettingsWindowController: NSWindowController {
                 skinPopup.addItem(withTitle: sk.name)
                 skinIds.append("custom:\(sk.id)")
             }
-            if !s.customSkin.isEmpty, let idx = skinIds.firstIndex(of: "custom:\(s.customSkin)") {
+            if s.artworkCharacter != .none, let idx = skinIds.firstIndex(of: "artwork:\(s.artworkCharacter.rawValue)") {
+                skinPopup.selectItem(at: idx)
+            } else if !s.customSkin.isEmpty, let idx = skinIds.firstIndex(of: "custom:\(s.customSkin)") {
                 skinPopup.selectItem(at: idx)
             } else if let idx = skinIds.firstIndex(of: "coat:\(s.coatTheme.rawValue)") {
                 skinPopup.selectItem(at: idx)
@@ -1200,6 +1207,12 @@ final class SettingsWindowController: NSWindowController {
             card.addSubview(langSeg)
         }
 
+        let fixedArtwork = s.artworkCharacter != .none
+        for control in [kbPopup, eyePopup] {
+            control?.isEnabled = !fixedArtwork
+            control?.toolTip = fixedArtwork ? tr("该角色使用固定配色", "This character uses its own colors") : nil
+        }
+        legendsSwitch.isEnabled = !fixedArtwork
         doc.frame = NSRect(x: 0, y: 0, width: 492, height: y + 8)
         scroll.documentView = doc
         win.contentView = scroll
@@ -1237,9 +1250,13 @@ final class SettingsWindowController: NSWindowController {
         let idx = skinPopup.indexOfSelectedItem
         guard idx >= 0 && idx < skinIds.count else { return }
         let token = skinIds[idx]
-        if token.hasPrefix("custom:") {
+        if token.hasPrefix("artwork:"), let character = ArtworkCharacter(rawValue: String(token.dropFirst(8))) {
+            CatSettings.shared.artworkCharacter = character
+        } else if token.hasPrefix("custom:") {
+            CatSettings.shared.artworkCharacter = .none
             CatSettings.shared.customSkin = String(token.dropFirst(7))
         } else if token.hasPrefix("coat:"), let coat = CatCoatTheme(rawValue: String(token.dropFirst(5))) {
+            CatSettings.shared.artworkCharacter = .none
             CatSettings.shared.customSkin = ""
             CatSettings.shared.coatTheme = coat
             switch coat {
@@ -1253,6 +1270,7 @@ final class SettingsWindowController: NSWindowController {
             }
         }
         onSettingsChanged?()
+        refresh()
     }
 
     @objc private func onKBSelected() {

@@ -55,6 +55,10 @@ enum EyeColorTheme: String, CaseIterable {
 final class CatSettings {
     static let shared = CatSettings()
 
+    var artworkCharacter: ArtworkCharacter {
+        didSet { UserDefaults.standard.set(artworkCharacter.rawValue, forKey: "KuroCat.ArtworkCharacter") }
+    }
+
     var showKeyBadges: Bool {
         didSet { UserDefaults.standard.set(showKeyBadges, forKey: "KuroCat.ShowKeyBadges") }
     }
@@ -151,6 +155,7 @@ final class CatSettings {
 
     private init() {
         let d = UserDefaults.standard
+        artworkCharacter = ArtworkCharacter(rawValue: d.string(forKey: "KuroCat.ArtworkCharacter") ?? "none") ?? .none
         showKeyBadges = d.object(forKey: "KuroCat.ShowKeyBadges") as? Bool ?? true
         showMouseBadges = d.object(forKey: "KuroCat.ShowMouseBadges") as? Bool ?? true
         showKeyLegends = d.object(forKey: "KuroCat.ShowKeyLegends") as? Bool ?? true
@@ -252,6 +257,8 @@ struct ScriptedFrameInput {
     var lastMouseMoveTime: CFTimeInterval
     var lastMouseClickTime: CFTimeInterval
     var lastKeyActivityTime: CFTimeInterval
+    // Optional deterministic replay seam; live input continues using the native engine's KPM.
+    var kpm: CGFloat? = nil
 }
 
 // MARK: - Cat Physics & Procedural Animation State
@@ -449,7 +456,7 @@ final class CatPhysics {
         }
 
         // Expressive micro-reactions
-        if CatSettings.shared.activeSkin.typingStyle == .douni {
+        if CatSettings.shared.artworkCharacter == .none && CatSettings.shared.activeSkin.typingStyle == .douni {
             let keyPt = KeyboardLayout.v2KeyCellCenter(for: vk)
             let useLeft = vk.prefersLeftPaw
             douniSlapSide = useLeft ? 0 : 1
@@ -525,7 +532,7 @@ final class CatPhysics {
         sleepiness = 0
         if isDown {
             let now = CACurrentMediaTime()
-            if CatSettings.shared.activeSkin.renderStyle == .douni {
+            if CatSettings.shared.artworkCharacter == .none && CatSettings.shared.activeSkin.renderStyle == .douni {
                 douniSlapTimer = 0
                 douniLeftRaise.target = 0
                 douniRightRaise.target = 0
@@ -871,7 +878,7 @@ final class CatPhysics {
         lieIntensity.step(dt: dt, stiffness: 55, damping: 14)
         let lie = max(0, min(1, lieIntensity.value))
 
-        let kpm = CGFloat(engine.currentKPM)
+        let kpm = scripted?.kpm ?? CGFloat(engine.currentKPM)
         angerIntensity.target = (CatSettings.shared.enableAnger && !isScruffDragging && dizzyTimer <= 0 && kpm >= 240)
             ? min(1.0, (kpm - 240.0) / 140.0) : 0.0
         angerIntensity.step(dt: dt, stiffness: 70, damping: 14)
@@ -911,7 +918,7 @@ final class CatPhysics {
         }
 
         // 3+ simultaneous keys (or 2+ keys while other hand is busy on the mouse!) -> HIND FOOT EASTER EGG!!
-        if CatSettings.shared.footEasterEgg {
+        if CatSettings.shared.footEasterEgg && CatSettings.shared.artworkCharacter == .none {
             if orderedKeys.count >= 3 {
                 footKey = orderedKeys.first { $0 != leftKey && $0 != rightKey }
             } else if mouseActivelyUsed && leftKey == nil && rightCandidates.count >= 2 {
@@ -941,7 +948,7 @@ final class CatPhysics {
         )
 
         // Graphics Tablet & Stylus mode (auto-switches when tablet/pen connected!)
-        let tMode = CatSettings.shared.tabletMode
+        let tMode = CatSettings.shared.artworkCharacter == .none ? CatSettings.shared.tabletMode : 2
         isTabletActive = (tMode == 1) || (tMode == 0 && engine.isTabletConnected)
         if isTabletActive {
             let screenFrame = (NSScreen.screens.first { $0.frame.contains(curMouseLoc) } ?? NSScreen.main)?.frame
@@ -964,8 +971,8 @@ final class CatPhysics {
             if tabletTrail[i].age >= 0.72 { tabletTrail.remove(at: i) }
         }
 
-        let isDouniTyping = CatSettings.shared.activeSkin.typingStyle == .douni
-        let isDouniSkin = CatSettings.shared.activeSkin.renderStyle == .douni
+        let isDouniTyping = CatSettings.shared.artworkCharacter == .none && CatSettings.shared.activeSkin.typingStyle == .douni
+        let isDouniSkin = CatSettings.shared.artworkCharacter == .none && CatSettings.shared.activeSkin.renderStyle == .douni
         if isDouniTyping {
             douniSlapTimer = max(0, douniSlapTimer - dt)
             let leftHeldNow = activeKeys.contains { $0.prefersLeftPaw }
@@ -1108,7 +1115,7 @@ final class CatPhysics {
         }
 
         // Held physical keys determine the mode; repeats and mouse buttons do not count.
-        tailTyping.target = (CatSettings.shared.tailEasterEgg && activeKeys.count == 4) ? 1 : 0
+        tailTyping.target = (CatSettings.shared.artworkCharacter == .none && CatSettings.shared.tailEasterEgg && activeKeys.count == 4) ? 1 : 0
         tailTyping.step(dt: dt, stiffness: 180, damping: 24)
         // Marquee chase across the keyboard deck: steady sweep, faster while many keys are held.
         if CatSettings.shared.keyboardMarquee {
@@ -1254,7 +1261,7 @@ final class CatPhysics {
         }
 
         // 7. Tail wag speed reacts organically to energy / petting / hunting tension!
-        let kpmBoost = min(2.4, CGFloat(engine.currentKPM) / 160.0)
+        let kpmBoost = min(2.4, kpm / 160.0)
         let petBoost = max(petHeadIntensity, petBodyIntensity) * 1.4
         let huntBoost = hunt * 2.8
         let agilityBoost = max(0, min(1, tailAgility.value)) * 3.2

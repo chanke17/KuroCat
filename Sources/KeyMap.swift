@@ -16,7 +16,7 @@ enum PhysicalKey: String, Hashable, CaseIterable {
     // Row 4: Modifiers & Space
     case leftControl, leftOption, leftCommand, space, rightCommand, rightOption, fn, arrowLeft, arrowDown, arrowRight
     // Extra function / nav keys (mapped cleanly onto top/edge key positions)
-    case grave, rightControl, forwardDelete
+    case grave, rightControl, forwardDelete, home, pageUp, pageDown
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
 
     /// Short, clean keycap badge label matching mechanical keycap aesthetics.
@@ -38,6 +38,9 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case .equal: return "="
         case .backspace: return "⌫"
         case .forwardDelete: return "⌦"
+        case .home: return "Home"
+        case .pageUp: return "PgUp"
+        case .pageDown: return "PgDn"
         case .tab: return "⇥"
         case .q: return "Q"
         case .w: return "W"
@@ -102,9 +105,13 @@ enum PhysicalKey: String, Hashable, CaseIterable {
 
     /// Which visual keycap on our 65% mini keyboard lights up when this key is pressed.
     var visualKey: PhysicalKey {
+        if CatSettings.shared.artworkCharacter != .none, ArtworkKeyboardLayout.lookup[self] != nil { return self }
         switch self {
         case .grave: return .escape
         case .forwardDelete: return .backspace
+        case .home: return .backspace
+        case .pageUp: return .arrowUp
+        case .pageDown: return .arrowDown
         case .rightControl: return .fn
         case .f1: return .k1
         case .f2: return .k2
@@ -209,6 +216,9 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case 0x44: return .f11
         case 0x45: return .f12
         case 0x4C: return .forwardDelete
+        case 0x4A: return .home
+        case 0x4B: return .pageUp
+        case 0x4E: return .pageDown
         case 0x4F: return .arrowRight
         case 0x50: return .arrowLeft
         case 0x51: return .arrowDown
@@ -325,6 +335,9 @@ enum PhysicalKey: String, Hashable, CaseIterable {
         case 109: return .f10
         case 111: return .f12
         case 117: return .forwardDelete
+        case 115: return .home
+        case 116: return .pageUp
+        case 121: return .pageDown
         case 118: return .f4
         case 120: return .f2
         case 122: return .f1
@@ -352,7 +365,7 @@ struct VisualKeycap {
     }
 }
 
-/// Complete 65% mini mechanical keyboard layout facing the cat (180° rotated relative to viewer),
+/// ANSI 68-key / 16u mini keyboard facing the cat (180° rotated relative to viewer),
 /// matching the reference video's Spacebar closest to the cat, amber Enter on left, and amber Esc at bottom-right!
 enum KeyboardLayout {
     static let keycaps: [VisualKeycap] = {
@@ -446,7 +459,8 @@ enum KeyboardLayout {
 
     static func canvasPoint(for key: PhysicalKey) -> CGPoint {
         let vk = key.visualKey
-        if let cap = lookup[vk] {
+        let cap = CatSettings.shared.artworkCharacter == .none ? lookup[vk] : ArtworkKeyboardLayout.lookup[vk]
+        if let cap = cap {
             let c = cap.normalizedCenter
             return canvasPoint(u: c.x, v: c.y)
         }

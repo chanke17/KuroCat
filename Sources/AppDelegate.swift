@@ -304,6 +304,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let coatMenu = NSMenu()
         let library = SkinLibrary.shared
         let customActive = library.skin(id: settings.customSkin) != nil
+        for character in [ArtworkCharacter.hood, .blob] {
+            let item = NSMenuItem(title: character.title, action: #selector(selectArtworkCharacter(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = character.rawValue
+            item.state = settings.artworkCharacter == character ? .on : .off
+            coatMenu.addItem(item)
+        }
+        coatMenu.addItem(.separator())
         for coat in CatCoatTheme.allCases {
             let coatTitle: String
             if en {
@@ -319,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let item = NSMenuItem(title: coatTitle, action: #selector(selectCoatTheme(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = coat.rawValue
-            item.state = !customActive && settings.coatTheme == coat ? .on : .off
+            item.state = settings.artworkCharacter == .none && !customActive && settings.coatTheme == coat ? .on : .off
             coatMenu.addItem(item)
         }
         if !library.skins.isEmpty {
@@ -328,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let item = NSMenuItem(title: skin.name, action: #selector(selectCustomSkin(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = skin.id
-                item.state = settings.customSkin == skin.id ? .on : .off
+                item.state = settings.artworkCharacter == .none && settings.customSkin == skin.id ? .on : .off
                 if !skin.author.isEmpty { item.toolTip = tr("作者：\(skin.author)", "Author: \(skin.author)") }
                 coatMenu.addItem(item)
             }
@@ -673,6 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectCoatTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let coat = CatCoatTheme(rawValue: raw) else { return }
+        CatSettings.shared.artworkCharacter = .none
         CatSettings.shared.customSkin = ""
         CatSettings.shared.coatTheme = coat
         // Auto-pair signature eye color (still freely overridable via 瞳色切换!)
@@ -691,6 +700,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Imported skins (换装间)
+
+    @objc private func selectArtworkCharacter(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let character = ArtworkCharacter(rawValue: raw) else { return }
+        CatSettings.shared.artworkCharacter = character
+        settingsWindow?.refresh()
+        dressingRoom?.refresh()
+        overlayWindow.catView.needsDisplay = true
+    }
 
     private static let skinWorkshopURLString = "https://chanke17.github.io/KuroCat-Workshop/"
     private static let keyboardPlazaURLString = "https://chanke17.github.io/KuroCat-Workshop/#keyboards"
@@ -734,6 +752,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func importSkin(from url: URL) {
         do {
             let id = try SkinLibrary.shared.importFile(url)
+            CatSettings.shared.artworkCharacter = .none
             CatSettings.shared.customSkin = id
             let skin = SkinLibrary.shared.skin(id: id)
             var message = "已换上「\(skin?.name ?? "新皮肤")」"
@@ -760,6 +779,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func selectCustomSkin(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
+        CatSettings.shared.artworkCharacter = .none
         CatSettings.shared.customSkin = id
         dressingRoom?.refresh()
         settingsWindow?.refresh()
