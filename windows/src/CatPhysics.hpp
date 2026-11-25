@@ -333,6 +333,7 @@ public:
     Spring2D mouseOffset{{0.0f, 0.0f}};
     Spring1D mousePressLeft{0.0f};
     Spring1D mousePressRight{0.0f};
+    Spring1D mousePressMiddle{0.0f};
 
     static Pt tabletQuadPoint(float u, float v) {
         constexpr Pt tl = { 18.0f, 235.0f }, tr = { 94.0f, 240.0f };
@@ -491,6 +492,14 @@ public:
     }
 
     void triggerMouseClick(int button, bool isDown, const CatSettings& settings, bool douniSkin = false) {
+        Spring1D* press;
+        switch (button) {
+            case 0: press = &mousePressLeft; break;
+            case 1: press = &mousePressRight; break;
+            case 2: press = &mousePressMiddle; break;
+            default: return;
+        }
+        press->target = isDown ? 1.0f : 0.0f;
         sleepiness = 0.0f;
         if (isDown) {
             double now = nowSeconds();
@@ -501,13 +510,9 @@ public:
                 douniLoafBlend.target = 0.0f;
                 douniMouseBlend.target = 1.0f;
             }
-            if (button == 0) {
-                mousePressLeft.target = 1.0f;
-                leftPaw.y.velocity += 130.0f;
-            } else {
-                mousePressRight.target = 1.0f;
-                leftPaw.y.velocity += 110.0f;
-            }
+            // Keep a brief wheel highlight even when both edges arrive before the next frame.
+            if (button == 2) press->value = std::max(press->value, 0.35f);
+            leftPaw.y.velocity += button == 0 ? 130.0f : 110.0f;
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
             if (settings.showMouseBadges) {
@@ -517,9 +522,6 @@ public:
                 Pt pt = { MouseBaseCenter.x + mouseOffset.point().x, MouseBaseCenter.y + mouseOffset.point().y - 6.0f };
                 spawnFloatingKeycap(lbl, pt, now);
             }
-        } else {
-            if (button == 0) mousePressLeft.target = 0.0f;
-            else mousePressRight.target = 0.0f;
         }
     }
 
@@ -812,8 +814,9 @@ public:
 
         // 3. Limb assignment (Left Paw, Right Paw, 3-Key Hind Foot!)
         constexpr double tapHoldWindow = 0.14;
-        bool mouseRecent = (now - engine.lastMouseMoveTime < 2.2) || engine.leftMouseDown || engine.rightMouseDown;
-        bool mouseActivelyUsed = (now - engine.lastMouseMoveTime < 0.75) || engine.leftMouseDown || engine.rightMouseDown;
+        bool mouseButtonHeld = engine.leftMouseDown || engine.rightMouseDown || engine.otherMouseDown;
+        bool mouseRecent = (now - engine.lastMouseMoveTime < 2.2) || mouseButtonHeld;
+        bool mouseActivelyUsed = (now - engine.lastMouseMoveTime < 0.75) || mouseButtonHeld;
 
         std::vector<PhysicalKey> leftCands, rightCands;
         for (PhysicalKey k : orderedKeys) {
@@ -868,6 +871,7 @@ public:
         mouseOffset.step(dt, 120.0f, 16.0f);
         mousePressLeft.step(dt, 400.0f, 24.0f);
         mousePressRight.step(dt, 400.0f, 24.0f);
+        mousePressMiddle.step(dt, 400.0f, 24.0f);
 
         Pt liveMouse = { MouseBaseCenter.x + mouseOffset.point().x, MouseBaseCenter.y + mouseOffset.point().y };
 

@@ -69,6 +69,7 @@ struct SkinDecoration {
 struct SkinPalette {
     SkinColor body, bodyShade, belly, legs, paws, hindLeg, hindPaw, pawPads, earOuter, earInner, nose, mouth, iris,
               tail, tailTip, stripes, whiskers, crease, outline, points, pointsMid;
+    SkinColor irisLeft, irisRight;
 };
 
 struct SkinSpec {
@@ -451,6 +452,7 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
         {"hindPaw", &SkinPalette::hindPaw}, {"pawPads", &SkinPalette::pawPads},
         {"earOuter", &SkinPalette::earOuter}, {"earInner", &SkinPalette::earInner}, {"nose", &SkinPalette::nose},
         {"mouth", &SkinPalette::mouth}, {"iris", &SkinPalette::iris}, {"tail", &SkinPalette::tail},
+        {"irisLeft", &SkinPalette::irisLeft}, {"irisRight", &SkinPalette::irisRight},
         {"tailTip", &SkinPalette::tailTip}, {"stripes", &SkinPalette::stripes}, {"whiskers", &SkinPalette::whiskers},
         {"crease", &SkinPalette::crease}, {"outline", &SkinPalette::outline}, {"points", &SkinPalette::points},
         {"pointsMid", &SkinPalette::pointsMid},

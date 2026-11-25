@@ -771,9 +771,10 @@ private:
         g.DrawLine(&seamPen, 0.0f, 16.0f, 0.0f, 1.5f);
 
         // Amber scroll wheel on front (bottom) half
+        float wheelPress = std::clamp(physics.mousePressMiddle.value, 0.0f, 1.0f);
         GraphicsPath wheelPath;
-        addRoundedRect(wheelPath, -1.9f, 2.5f, 3.8f, 8.5f, 1.9f);
-        SolidBrush wheelBrush(wheelCol);
+        addRoundedRect(wheelPath, -1.9f, 2.5f + wheelPress, 3.8f, 8.5f - wheelPress, 1.9f);
+        SolidBrush wheelBrush(blendColor(wheelCol, Color(wheelCol.GetA(), 255, 255, 255), 0.6f * wheelPress));
         g.FillPath(&wheelBrush, &wheelPath);
 
         Pen borderPen(borderCol, 1.7f);
@@ -1984,10 +1985,12 @@ private:
         float radius = 8.5f + hunt * 1.0f;
         float pupilRadius = 6.25f + hunt * 1.35f;
         SolidBrush eyeRim(ink);
-        SolidBrush iris(blendColor(rgb(0xFFF8E5), eyePrimary(eyeTheme), 0.20f));
+        Color defaultIris = blendColor(rgb(0xFFF8E5), eyePrimary(eyeTheme), 0.20f);
         SolidBrush pupil(rgb(0x191825));
         SolidBrush glint(rgb(0xFFF9EA));
         for (float x : {-11.8f, 11.8f}) {
+            SkinColor eyeColor = specialIrisForEye(skin.palette, x < 0.0f);
+            SolidBrush iris(eyeColor.set ? col(eyeColor) : defaultIris);
             GraphicsState eye = g.Save();
             g.TranslateTransform(x, 1.0f);
             g.ScaleTransform(1.0f, open);
@@ -2087,12 +2090,24 @@ private:
         Pen pen(Color(199,139,140,134),1.15f); pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound); pen.SetLineJoin(LineJoinRound); g.DrawPath(&pen,&mouth);
     }
 
+    static const SkinColor& irisForEye(const SkinPalette& palette, bool isLeft) {
+        const SkinColor& side = isLeft ? palette.irisLeft : palette.irisRight;
+        return side.set ? side : palette.iris;
+    }
+
+    static SkinColor specialIrisForEye(const SkinPalette& palette, bool isLeft) {
+        // Preserve the original palettes of special styles until the skin sets a side override.
+        if (!palette.irisLeft.set && !palette.irisRight.set) return {};
+        return irisForEye(palette, isLeft);
+    }
+
     static void drawEye3D(Gdiplus::Graphics& g, bool isLeft, float yawRad, float pitchRad, const CatPhysics& physics, EyeColorTheme eyeTheme, const SkinSpec& skin,
                           float scruffStartle = 0.0f, float scruffWide = 0.0f) {
         using namespace Gdiplus;
         float sign = isLeft ? -1.0f : 1.0f;
-        bool customIris = skin.palette.iris.set; // a skin's iris overrides the eye-colour menu
-        Color eyeCol = customIris ? col(skin.palette.iris) : eyePrimary(eyeTheme);
+        const SkinColor& iris = irisForEye(skin.palette, isLeft);
+        bool customIris = iris.set; // A skin can override the eye-colour menu for each eye.
+        Color eyeCol = customIris ? col(iris) : eyePrimary(eyeTheme);
         Pt proj = projectHead3D(sign * 17.2f, -2.0f, 27.5f, yawRad, pitchRad);
 
         float eyeNormal = yawRad + sign * 0.34f;
@@ -3568,15 +3583,19 @@ private:
         }
 
         // 8. Huge Watery Anime Boba Eyes (v1_06 full wide open <-> v1_05 flat half-lidded!)
-        Color irisColor = isDouni
-            ? douniIceIris()
-            : blendColor(skin.palette.iris.set ? col(skin.palette.iris) : eyePrimary(eyeTheme), Color(255, 255, 255, 255), 0.28f);
+        auto dragIris = [&](bool isLeft) {
+            SkinColor iris = specialIrisForEye(skin.palette, isLeft);
+            if (iris.set) return col(iris);
+            if (isDouni) return douniIceIris();
+            return blendColor(skin.palette.iris.set ? col(skin.palette.iris) : eyePrimary(eyeTheme),
+                              Color(255, 255, 255, 255), 0.28f);
+        };
         Pt leftEyeCenter  = { lerpF(273.0f, 268.0f, s), lerpF(223.0f, 324.0f, s) };
         Pt rightEyeCenter = { lerpF(510.0f, 501.0f, s), lerpF(222.0f, 324.0f, s) };
         float eyeRX = lerpF(87.0f, 89.0f, s);
         float eyeRY = lerpF(91.0f, 84.0f, s);
-        drawV1WateryEye(g, leftEyeCenter, eyeRX, eyeRY, true, irisColor, inkColor, lw, s, isBlackRim);
-        drawV1WateryEye(g, rightEyeCenter, eyeRX + 2.0f, eyeRY, false, irisColor, inkColor, lw, s, isBlackRim);
+        drawV1WateryEye(g, leftEyeCenter, eyeRX, eyeRY, true, dragIris(true), inkColor, lw, s, isBlackRim);
+        drawV1WateryEye(g, rightEyeCenter, eyeRX + 2.0f, eyeRY, false, dragIris(false), inkColor, lw, s, isBlackRim);
 
         // Optional cute tiny nose on patterned non-Douni cats
         if (!isDouni && !isBlackRim && !skin.colorpoint()) {
@@ -4232,6 +4251,7 @@ private:
                                          glowBaseColor, eyePrimary(eyeTheme), ink, catLW, mouseBlend < 0.18f);
                 } else {
                     drawDouniComicMouse(lg, mouseCenter, physics.mousePressLeft.value, physics.mousePressRight.value,
+                                        physics.mousePressMiddle.value,
                                         mouseBodyColor, kbBevelColor, mouseWheelColor, glowBaseColor, ink, catLW);
                 }
                 lg.Restore(gs);
@@ -4296,9 +4316,11 @@ private:
                 float baseBlink = poseOverride ? 0.0f : physics.blinkProgress();
                 float blink = std::max(baseBlink, smoothstep(0.04f, 0.44f, morph));
                 drawV2BobaEye(lg, { 518.0f, 262.0f }, 47.5f, true, gazeX, gazeY, blink,
-                              hunt, dizzy, physics.dizzyPhase, anger, cream, ink, catLW);
+                              hunt, dizzy, physics.dizzyPhase, anger, cream, ink, catLW,
+                              specialIrisForEye(skin.palette, true));
                 drawV2BobaEye(lg, { 652.0f, 274.0f }, 46.5f, false, gazeX, gazeY, blink,
-                              hunt, dizzy, physics.dizzyPhase, anger, cream, ink, catLW);
+                              hunt, dizzy, physics.dizzyPhase, anger, cream, ink, catLW,
+                              specialIrisForEye(skin.palette, false));
 
                 // 2e. Expressive Comic Emotion Accents: Pulsing Red Anger Vein, Alert Hunter Ticks, Orbiting Dizzy Stars!
                 if (anger > 0.14f) {
@@ -4492,7 +4514,7 @@ private:
     static void drawV2BobaEye(
         Gdiplus::Graphics& g, Pt center, float r, bool isLeft, float gazeX, float gazeY,
         float blink, float hunt, float dizzy, float dizzyPhase, float anger,
-        Gdiplus::Color cream, Gdiplus::Color ink, float lw
+        Gdiplus::Color cream, Gdiplus::Color ink, float lw, const SkinColor& iris
     ) {
         using namespace Gdiplus;
         if (blink > 0.72f && dizzy < 0.25f) {
@@ -4543,6 +4565,11 @@ private:
                 float baseY = lerpF(7.5f, 0.0f, hunt);
                 float px = baseX + gazeX * (7.5f + hunt * 10.5f);
                 float py = baseY + gazeY * (5.5f + hunt * 8.5f);
+                if (iris.set) {
+                    float radius = pr + r * 0.12f;
+                    SolidBrush irisBrush(col(iris));
+                    g.FillEllipse(&irisBrush, px - radius, py - radius, radius * 2.0f, radius * 2.0f);
+                }
                 SolidBrush blackBrush(Color(255, 0, 0, 0));
                 g.FillEllipse(&blackBrush, px - pr, py - pr, pr * 2.0f, pr * 2.0f);
 
@@ -4914,6 +4941,7 @@ private:
         Pt center,
         float pressLeft,
         float pressRight,
+        float pressMiddle,
         Gdiplus::Color bodyColor,
         Gdiplus::Color bevelColor,
         Gdiplus::Color wheelColor,
@@ -4983,9 +5011,10 @@ private:
 
         // Scroll wheel pill
         {
+            float wheelPress = std::clamp(pressMiddle, 0.0f, 1.0f);
             GraphicsPath wheelPath;
-            addRoundedRect(wheelPath, -29.0f, -5.5f, 17.0f, 11.0f, 5.0f);
-            SolidBrush wb(wheelColor);
+            addRoundedRect(wheelPath, -29.0f, -5.5f + 2.0f * wheelPress, 17.0f, 11.0f - 2.0f * wheelPress, 5.0f);
+            SolidBrush wb(blendColor(wheelColor, Color(wheelColor.GetA(), 255, 255, 255), 0.6f * wheelPress));
             g.FillPath(&wb, &wheelPath);
             Pen wp(ink, lw * 0.62f);
             setRound(wp);
