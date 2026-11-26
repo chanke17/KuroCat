@@ -1,6 +1,10 @@
 # Cat Link protocol (v1)
 
-Cat Link lets two KuroCats show each other's cat. Both apps connect to the same MQTT server and exchange small, encrypted, anonymized activity events. The Mac version is in `Sources/CatLink.swift`; any other version (Windows, Linux) must follow this document byte for byte.
+Cat Link lets two KuroCats show each other's cat.
+
+Cat Link uses EMQX's public servers (`broker-cn.emqx.io` and `broker.emqx.io`). They're open to anyone with no sign-up, no username and no password. EMQX runs them free so developers can test MQTT apps, a bit like a public Wi-Fi hotspot.
+
+Both apps connect to the same MQTT server and exchange small, encrypted, anonymized activity events. The Mac version is in `Sources/CatLink.swift`; any other version (Windows, Linux) must follow this document byte for byte.
 
 ## Pairing code
 
