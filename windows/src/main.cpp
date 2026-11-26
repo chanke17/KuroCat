@@ -855,7 +855,10 @@ static bool isMusicPlayerPlaying() {
         L"potplayermini64.exe", L"potplayermini.exe", L"vlc.exe", L"mpv.exe",
         L"mpc-hc64.exe", L"mpc-be64.exe", L"wmplayer.exe", L"microsoft.media.player.exe",
         L"tidal.exe", L"youtube music.exe", L"bilibili.exe", L"listen1.exe",
-        L"zyplayer.exe", L"kodi.exe", L"audacious.exe"
+        L"zyplayer.exe", L"kodi.exe", L"audacious.exe",
+        // Browser audio sessions host web players such as YouTube and Spotify Web.
+        L"chrome.exe", L"msedge.exe", L"firefox.exe", L"brave.exe",
+        L"opera.exe", L"opera_gx.exe", L"vivaldi.exe", L"arc.exe"
     };
     IMMDeviceEnumerator* enumerator = nullptr;
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
