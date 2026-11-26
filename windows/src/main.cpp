@@ -28,6 +28,7 @@ using std::max;
 #include <vector>
 #include <cmath>
 #include <cwchar>
+#include <optional>
 #include "KeyMap.hpp"
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
@@ -150,6 +151,7 @@ struct AppState {
     CatSettings settings;
     InputEngine input;
     CatPhysics physics;
+    std::optional<dazed_skin::Callout> dazedCallout;
     SkinLibrary skins;
     KeyboardSkinLibrary kbLibrary;
     HWND dressingRoom = nullptr;    // 「换装间」 import window (nullptr when closed)
@@ -2883,7 +2885,15 @@ void tickAndRender(AppState& app) {
     Gdiplus::Graphics g(&bmp);
     g.Clear(app.settings.obsCaptureMode == 2 ? Gdiplus::Color(255, 0, 255, 0) : Gdiplus::Color(0, 0, 0, 0));
     g.ScaleTransform((float)w / CatPhysics::CanvasWidth, (float)h / CatPhysics::CanvasHeight);
-    CatRenderer::draw(g, app.physics, app.settings, activeSkin(app), activeKeyboardSkin(app));
+    const SkinSpec& renderSkin = activeSkin(app);
+    CatRenderer::draw(g, app.physics, app.settings, renderSkin, activeKeyboardSkin(app));
+    if (dazed_skin::matches(renderSkin) && app.settings.showKeyBadges && !app.settings.isEditMode) {
+        if (!app.dazedCallout) app.dazedCallout.emplace();
+        app.dazedCallout->update(app.physics);
+        CatRenderer::drawDazedCallout(g, app.physics, app.settings, renderSkin, *app.dazedCallout);
+    } else {
+        app.dazedCallout.reset();
+    }
 
     // Green-screen mode (#00FF00) disables WS_EX_LAYERED so BitBlt / PrintWindow / Bilibili Live / OBS
     // all capture the solid window directly without black-screen issues; transparent modes use UpdateLayeredWindow.
