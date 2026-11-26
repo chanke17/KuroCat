@@ -754,6 +754,20 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
+    struct EarPoint { var x, y, z: CGFloat }
+
+    /// Head-local 3D corners of an ear before the 2.5D projection, plus its lean angle (0 = upright).
+    /// Shared with the physics so the AirPods stay in the ear as it folds and twitches.
+    static func earCorners(isLeft: Bool, fold: CGFloat, twitch: CGFloat) -> (inner: EarPoint, outer: EarPoint, tip: EarPoint, angle: CGFloat) {
+        let sign: CGFloat = isLeft ? -1.0 : 1.0
+        let foldAngle = sign * (0.06 + fold * 0.34) + twitch
+        // Bases anchored comfortably inside the upper skull contour so they merge seamlessly at every yaw/pitch!
+        return (EarPoint(x: sign * 9.0, y: -16.0, z: 0.0),
+                EarPoint(x: sign * 35.0, y: -5.0, z: -2.0),
+                EarPoint(x: sign * 24.5 + sin(foldAngle) * 32.0, y: -20.0 - cos(foldAngle) * 32.0, z: -3.0),
+                foldAngle)
+    }
+
     private static func drawEar3D(
         in ctx: CGContext,
         isLeft: Bool,
@@ -764,15 +778,11 @@ enum CatRenderer {
         coat: CatCoatTheme
     ) {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
-        let foldAngle = sign * (0.06 + fold * 0.34) + twitch
-
-        let tipDx = sin(foldAngle) * 32.0
-        let tipDy = -cos(foldAngle) * 32.0
-
-        // Bases anchored comfortably inside the upper skull contour so they merge seamlessly at every yaw/pitch!
-        let innerBase3D = projectHead3D(x: sign * 9.0, y: -16.0, z: 0.0, yawRad: yawRad, pitchRad: pitchRad).pt
-        let outerBase3D = projectHead3D(x: sign * 35.0, y: -5.0, z: -2.0, yawRad: yawRad, pitchRad: pitchRad).pt
-        let tip3D       = projectHead3D(x: sign * 24.5 + tipDx, y: -20.0 + tipDy, z: -3.0, yawRad: yawRad, pitchRad: pitchRad).pt
+        let corners = earCorners(isLeft: isLeft, fold: fold, twitch: twitch)
+        func project(_ c: EarPoint) -> CGPoint { projectHead3D(x: c.x, y: c.y, z: c.z, yawRad: yawRad, pitchRad: pitchRad).pt }
+        let innerBase3D = project(corners.inner)
+        let outerBase3D = project(corners.outer)
+        let tip3D       = project(corners.tip)
 
         // Soft plush rounded-tip feline ear
         let tipLeft  = CGPoint(x: tip3D.x - sign * 3.8, y: tip3D.y + 2.8)
@@ -1248,54 +1258,66 @@ enum CatRenderer {
             let pos = CGPoint(x: held.x + (ear.x - held.x) * t, y: held.y + (ear.y - held.y) * t)
             // The stem points down and outward along the ear's outer edge (about 43°), held the same
             // way in the paw so the bud doesn't spin as it goes in; in the ear it also tilts with the head.
-            let rotation = physics.headTilt.value * t - sign * CatRenderer.earbudStemAngle
+            let rotation = (physics.headTilt.value + physics.earbudLean(isLeft: isLeft)) * t - sign * CatRenderer.earbudStemAngle
             drawAirPod(in: ctx, at: pos, isLeft: isLeft, rotation: rotation, scale: pose.scale, alpha: alpha)
         }
     }
 
     static let earbudStemAngle: CGFloat = 0.75
 
-    /// One white AirPod: round bud with a short stem, drawn with a soft grey edge so it reads on every coat.
+    /// One white AirPod seen from outside, as it looks when worn: the silicone tip hidden in the ear
+    /// (only a sliver peeks out toward the ear), a rounded shell flowing into the stem, the black oval
+    /// mesh where shell meets stem, and a silver cap at the stem's end. Local +y runs down the stem.
     private static func drawAirPod(in ctx: CGContext, at p: CGPoint, isLeft: Bool, rotation: CGFloat, scale: CGFloat, alpha: CGFloat) {
         guard alpha > 0.01, scale > 0.01 else { return }
         let sign: CGFloat = isLeft ? -1 : 1
-        let white = rgb(0xF8F8F6), shade = rgb(0xD4D6D9), edge = rgb(0x7E8187, 0.95)
+        let white = rgb(0xF9F9F7), shade = rgb(0xDCDEE1), edge = rgb(0x7E8187)
         ctx.saveGState()
         ctx.setAlpha(alpha)
         ctx.translateBy(x: p.x, y: p.y)
         ctx.rotate(by: rotation)
         ctx.scaleBy(x: scale, y: scale)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)   // so the overlapping parts fade out as one piece
 
-        // Stem: hangs straight down in local space; the caller's rotation sets its angle.
-        let stemEnd = CGPoint(x: 0, y: 12.5)
-        ctx.setLineCap(.round)
-        ctx.move(to: CGPoint(x: 0, y: 1)); ctx.addLine(to: stemEnd)
-        ctx.setStrokeColor(edge.cgColor); ctx.setLineWidth(4.9); ctx.strokePath()
-        ctx.move(to: CGPoint(x: 0, y: 1)); ctx.addLine(to: stemEnd)
-        ctx.setStrokeColor(white.cgColor); ctx.setLineWidth(3.3); ctx.strokePath()
-        // Microphone cap at the stem tip
-        ctx.setFillColor(shade.cgColor)
-        ctx.fillEllipse(in: CGRect(x: stemEnd.x - 1.3, y: stemEnd.y - 1.1, width: 2.6, height: 2.0))
+        // Silicone ear tip: tucked behind the shell, peeking out below it on the face side.
+        let tip = CGRect(x: -sign * 3.6 - 2.9, y: 1.4 - 2.3, width: 5.8, height: 4.6)
+        ctx.setFillColor(edge.cgColor); ctx.fillEllipse(in: tip.insetBy(dx: -0.75, dy: -0.75))
+        ctx.setFillColor(rgb(0xE4E6E9).cgColor); ctx.fillEllipse(in: tip)
 
-        // Bud
-        let bud = CGRect(x: -4.9, y: -4.6, width: 9.8, height: 9.0)
-        ctx.setFillColor(edge.cgColor)
-        ctx.fillEllipse(in: bud.insetBy(dx: -0.8, dy: -0.8))
+        // Shell + stem as one white shape with a single grey outline.
+        let shell = CGPath(ellipseIn: CGRect(x: -5.0, y: -4.8, width: 10.0, height: 9.4), transform: nil)
+        let stem = CGPath(roundedRect: CGRect(x: -2.25, y: 0, width: 4.5, height: 13.0),
+                          cornerWidth: 2.1, cornerHeight: 2.1, transform: nil)
+        ctx.setStrokeColor(edge.cgColor); ctx.setLineWidth(1.5)
+        ctx.addPath(shell); ctx.addPath(stem); ctx.strokePath()
         ctx.setFillColor(white.cgColor)
-        ctx.fillEllipse(in: bud)
-        // Soft shading on the lower, face-side half + a dark speaker mesh peeking toward the ear
+        ctx.addPath(shell); ctx.fillPath()
+        ctx.addPath(stem); ctx.fillPath()
+
+        // Soft shading on the side away from the light, clipped to the white shape.
         ctx.saveGState()
-        ctx.addEllipse(in: bud); ctx.clip()
-        ctx.setFillColor(shade.withAlphaComponent(0.85).cgColor)
-        ctx.fillEllipse(in: bud.offsetBy(dx: -sign * 2.6, dy: 2.6))
-        ctx.setFillColor(white.cgColor)
-        ctx.fillEllipse(in: bud.insetBy(dx: 1.2, dy: 1.2).offsetBy(dx: sign * 0.9, dy: -1.0))
+        ctx.addPath(shell); ctx.addPath(stem); ctx.clip()
+        ctx.setFillColor(shade.cgColor)
+        ctx.fill(CGRect(x: sign * 1.2, y: -6, width: sign * 5, height: 20).standardized)
         ctx.restoreGState()
-        ctx.setFillColor(rgb(0x3A3C40, 0.85).cgColor)
-        ctx.fillEllipse(in: CGRect(x: sign * 1.4 - 1.2, y: -2.9, width: 2.4, height: 1.7))
-        // Highlight
+
+        // Silver cap at the end of the stem.
+        ctx.setFillColor(rgb(0xB8BBC0).cgColor)
+        ctx.addPath(CGPath(roundedRect: CGRect(x: -2.25, y: 11.2, width: 4.5, height: 1.8),
+                           cornerWidth: 0.9, cornerHeight: 0.9, transform: nil))
+        ctx.fillPath()
+
+        // Black oval mesh at the top of the stem, along its length.
+        ctx.setFillColor(rgb(0x1D1E21).cgColor)
+        ctx.addPath(CGPath(roundedRect: CGRect(x: -1.05, y: -1.4, width: 2.1, height: 4.4),
+                           cornerWidth: 1.05, cornerHeight: 1.05, transform: nil))
+        ctx.fillPath()
+
+        // Highlight on the shell.
         ctx.setFillColor(NSColor.white.cgColor)
-        ctx.fillEllipse(in: CGRect(x: -sign * 1.8 - 1.0, y: -3.2, width: 2.0, height: 1.4))
+        ctx.fillEllipse(in: CGRect(x: -sign * 2.4 - 1.2, y: -3.6, width: 2.4, height: 1.5))
+
+        ctx.endTransparencyLayer()
         ctx.restoreGState()
     }
 

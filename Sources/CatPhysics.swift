@@ -454,13 +454,29 @@ final class CatPhysics {
     func earbudAnchor(isLeft: Bool) -> CGPoint { earbudAnchor3D(isLeft: isLeft).pt }
 
     /// Same, plus depth: z < 0 means the bud has turned to the far side of the head.
+    /// The bud is a fixed blend of the ear's corners (inner base, outer base, tip), so it stays inside
+    /// the ear as it folds back during petting or twitches.
     func earbudAnchor3D(isLeft: Bool) -> (pt: CGPoint, z: CGFloat) {
-        let sign: CGFloat = isLeft ? -1 : 1
-        let p = CatRenderer.projectHead3D(x: sign * 23, y: -31, z: 0,
+        let e = earCornersNow(isLeft: isLeft)
+        let (wi, wo, wt): (CGFloat, CGFloat, CGFloat) = (0.30, 0.216, 0.484)   // = (±23, -31) at rest
+        let p = CatRenderer.projectHead3D(x: wi * e.inner.x + wo * e.outer.x + wt * e.tip.x,
+                                          y: wi * e.inner.y + wo * e.outer.y + wt * e.tip.y,
+                                          z: wi * e.inner.z + wo * e.outer.z + wt * e.tip.z,
                                           yawRad: headYaw.value * 0.50, pitchRad: headPitch.value * 0.36)
         let c = cos(headTilt.value), s = sin(headTilt.value)
         let hc = headCenter
         return (CGPoint(x: hc.x + p.pt.x * c - p.pt.y * s, y: hc.y + p.pt.x * s + p.pt.y * c), p.z)
+    }
+
+    /// How far the ear leans away from its resting angle; the in-ear bud tilts with it.
+    func earbudLean(isLeft: Bool) -> CGFloat {
+        earCornersNow(isLeft: isLeft).angle - (isLeft ? -0.06 : 0.06)
+    }
+
+    /// Same inputs as the renderer's ear drawing (see CatRenderer.drawEarsLayer).
+    private func earCornersNow(isLeft: Bool) -> (inner: CatRenderer.EarPoint, outer: CatRenderer.EarPoint, tip: CatRenderer.EarPoint, angle: CGFloat) {
+        let twitch = earTwitch.value * 0.045
+        return CatRenderer.earCorners(isLeft: isLeft, fold: earFold.value, twitch: isLeft ? twitch : -twitch)
     }
 
     /// An AirPod held in a paw sits at the paw's inner top, so the paw stays outside the bud
