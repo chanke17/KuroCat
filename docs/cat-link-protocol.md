@@ -79,13 +79,13 @@ These are the Swift case names; the Windows enums use the same names in PascalCa
 
 ## How the receiver shows the friend's cat
 
-- **Keys:** each `kd` picks a random typing key on that paw's side that isn't already held, and holds it until the matching `ku`. Remote presses never show key badges. If a `ku` never arrives, release the key after 20 s.
+- **Keys:** each `kd` picks a random typing key on that paw's side that isn't already held, and holds it until the matching `ku`. Key bubbles, if shown, display that random stand-in key, never the real one. If a `ku` never arrives, release the key after 20 s.
 - **Mouse:** map `x`/`y` onto your own main screen. Multiply velocity by your screen height.
 - **Presence:** the friend is online while any batch has arrived in the last 25 s. When they go offline, release everything.
 
 ## Privacy rules (must hold in every version)
 
-- No key identities, no key badges, and no text are ever sent.
+- No key identities and no text are ever sent.
 - No keyboard events are sent while secure input (a password field) is active.
 - Sharing is opt-in, the app clearly shows that it's linked, and disconnecting stops all sending.
 - Everything is encrypted with the pairing code, so the public server only sees random bytes on a random topic.

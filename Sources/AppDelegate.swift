@@ -175,15 +175,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startRenderLoop() {
         lastFrameTime = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            guard let self, self.isPetVisible else { return }
+            guard let self else { return }
             let now = CACurrentMediaTime()
             let dt = CGFloat(now - self.lastFrameTime)
             self.lastFrameTime = now
 
-            let view = self.overlayWindow.catView
-            view.physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
-            view.updateHoverAndClickThrough()
-            view.needsDisplay = true
+            if self.isPetVisible {
+                let view = self.overlayWindow.catView
+                view.physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
+                view.updateHoverAndClickThrough()
+                view.needsDisplay = true
+            } else {
+                // Our cat is hidden, but Cat Link still needs live mouse speed for the friend.
+                InputEngine.shared.pollMouse(dt: min(dt, 1.0 / 25.0))
+            }
             self.catLink.step(dt: dt)
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -247,9 +252,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Visibility & Interactive modes
-        let visItem = NSMenuItem(title: isPetVisible ? "隐藏小黑猫" : "显示小黑猫", action: #selector(toggleVisibility), keyEquivalent: "")
-        visItem.target = self
-        menu.addItem(visItem)
+        // Which cats to show: ours and the friend's (Cat Link) independently, or all at once.
+        let showParent = NSMenuItem(title: "显示的猫咪", action: nil, keyEquivalent: "")
+        let showMenu = NSMenu()
+        let mineItem = NSMenuItem(title: "我的猫", action: #selector(toggleVisibility), keyEquivalent: "")
+        mineItem.target = self
+        mineItem.state = isPetVisible ? .on : .off
+        showMenu.addItem(mineItem)
+        let friendItem = NSMenuItem(title: "朋友的猫", action: #selector(toggleFriendVisibility), keyEquivalent: "")
+        friendItem.target = self
+        friendItem.state = catLink.showFriendCat ? .on : .off
+        showMenu.addItem(friendItem)
+        showMenu.addItem(.separator())
+        let showAll = NSMenuItem(title: "全部显示", action: #selector(showAllCats), keyEquivalent: "")
+        showAll.target = self
+        showMenu.addItem(showAll)
+        let hideAll = NSMenuItem(title: "全部隐藏", action: #selector(hideAllCats), keyEquivalent: "")
+        hideAll.target = self
+        showMenu.addItem(hideAll)
+        showParent.submenu = showMenu
+        menu.addItem(showParent)
 
         let clickThroughItem = NSMenuItem(title: "完全鼠标穿透 (按住 ⌥Option 可临时右键/拖动)", action: #selector(toggleClickThrough), keyEquivalent: "")
         clickThroughItem.target = self
@@ -414,7 +436,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             overlayWindow.orderOut(nil)
         }
-        catLink.setVisible(isPetVisible)
+    }
+
+    @objc private func toggleFriendVisibility() {
+        catLink.showFriendCat.toggle()
+    }
+
+    @objc private func showAllCats() {
+        if !isPetVisible { toggleVisibility() }
+        catLink.showFriendCat = true
+    }
+
+    @objc private func hideAllCats() {
+        if isPetVisible { toggleVisibility() }
+        catLink.showFriendCat = false
     }
 
     @objc private func toggleClickThrough() {

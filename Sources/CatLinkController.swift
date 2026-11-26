@@ -8,7 +8,6 @@ final class CatLinkController: NSObject {
     private var driver: RemoteCatDriver?
     private var lastHeart: CFTimeInterval = 0
     private var demoUntil: CFTimeInterval = 0
-    private var isPetVisible = true
 
     /// The app's context menu, shown on right-click over the friend's cat too.
     var menuProvider: (() -> NSMenu)?
@@ -18,7 +17,14 @@ final class CatLinkController: NSObject {
     private let defaults = UserDefaults.standard
     private var savedCode: CatLinkCode? { defaults.string(forKey: "KuroCat.LinkCode").flatMap { CatLinkCode(parsing: $0) } }
     private var nickname: String { defaults.string(forKey: "KuroCat.LinkNickname") ?? "" }
-    private var showFriendCat: Bool { defaults.object(forKey: "KuroCat.LinkShowFriend") as? Bool ?? true }
+    /// Whether the friend's cat is shown (independent of our own cat).
+    var showFriendCat: Bool {
+        get { defaults.object(forKey: "KuroCat.LinkShowFriend") as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: "KuroCat.LinkShowFriend")
+            if shouldShowRemote { remoteWindow?.orderFrontRegardless() } else { remoteWindow?.orderOut(nil) }
+        }
+    }
     private var newCodeServer: CatLinkCode.Server {
         CatLinkCode.Server(rawValue: defaults.string(forKey: "KuroCat.LinkServer") ?? "") ?? .china
     }
@@ -53,11 +59,6 @@ final class CatLinkController: NSObject {
                                     scripted: driver.frameInput(now: now, screen: screen))
         window.catView.updateHoverAndClickThrough()
         window.catView.needsDisplay = true
-    }
-
-    func setVisible(_ visible: Bool) {
-        isPetVisible = visible
-        if !visible { remoteWindow?.orderOut(nil) } else if shouldShowRemote { remoteWindow?.orderFrontRegardless() }
     }
 
     func applyScale(_ scale: CGFloat) { remoteWindow?.applyScale(scale) }
@@ -99,7 +100,7 @@ final class CatLinkController: NSObject {
     }
 
     private var shouldShowRemote: Bool {
-        isPetVisible && showFriendCat && (isDemo || link.status != .off) && driver?.hasProfile == true
+        showFriendCat && (isDemo || link.status != .off) && driver?.hasProfile == true
     }
 
     private func ensureRemoteWindow() {
@@ -117,7 +118,7 @@ final class CatLinkController: NSObject {
             remoteWindow = window
             driver = RemoteCatDriver(physics: window.catView.physics)
         }
-        if let window = remoteWindow, !window.isVisible, isPetVisible, showFriendCat {
+        if let window = remoteWindow, !window.isVisible, showFriendCat {
             window.orderFrontRegardless()
         }
     }
@@ -186,9 +187,6 @@ final class CatLinkController: NSObject {
         serverParent.submenu = serverMenu
         sub.addItem(serverParent)
         sub.addItem(item("我的昵称：\(nickname.isEmpty ? "未设置" : nickname)…", #selector(setNickname)))
-        let show = item("显示朋友的猫", #selector(toggleShowFriend))
-        show.state = showFriendCat ? .on : .off
-        sub.addItem(show)
         sub.addItem(.separator())
         sub.addItem(item("🎬 演示：模拟一位朋友", #selector(runDemo)))
         sub.addItem(item("对方能看到什么？", #selector(explain)))
@@ -286,10 +284,6 @@ final class CatLinkController: NSObject {
         link.profileChanged()
     }
 
-    @objc private func toggleShowFriend() {
-        defaults.set(!showFriendCat, forKey: "KuroCat.LinkShowFriend")
-        if shouldShowRemote { remoteWindow?.orderFrontRegardless() } else { remoteWindow?.orderOut(nil) }
-    }
 
     @objc private func explain() {
         let alert = NSAlert()

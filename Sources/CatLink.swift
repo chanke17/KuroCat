@@ -517,7 +517,8 @@ extension CatLinkEvent {
 // MARK: - Remote cat driver
 
 /// Turns the friend's events into frame input for the second cat. Their keys arrive anonymized
-/// (just "left paw" / "right paw"), so each press lands on a random key on that side.
+/// (just "left paw" / "right paw"), so each press lands on a random key on that side; key bubbles
+/// show that random stand-in, never what the friend actually typed.
 final class RemoteCatDriver {
     let physics: CatPhysics
     private(set) var hasProfile = false
@@ -540,7 +541,6 @@ final class RemoteCatDriver {
 
     init(physics: CatPhysics) {
         self.physics = physics
-        physics.showsKeyBadges = false
         physics.externalActiveKeys = []
         physics.kpmOverride = 0
     }

@@ -99,6 +99,8 @@ enum MenuCmd : UINT {
     CMD_LINK_NICKNAME,
     CMD_LINK_DEMO,
     CMD_TOGGLE_EARBUDS,
+    CMD_SHOW_ALL,
+    CMD_HIDE_ALL,
     CMD_QUIT
 };
 
@@ -1104,7 +1106,7 @@ void setTrayTip(AppState& app, const wchar_t* tip) {
 void showFriendWindow(AppState& app, bool show) {
     auto& f = app.friendCat;
     if (!f.hwnd) return;
-    bool want = show && app.isVisible && app.showFriendCat;
+    bool want = show && app.showFriendCat;
     if (want == f.shown) return;
     f.shown = want;
     ShowWindow(f.hwnd, want ? SW_SHOWNOACTIVATE : SW_HIDE);
@@ -1114,7 +1116,6 @@ void ensureFriendCat(AppState& app) {
     auto& f = app.friendCat;
     if (!f.hwnd) {
         f.settings = app.settings;
-        f.settings.showKeyBadges = false;   // the friend's keys are random stand-ins
         RECT mr = {};
         GetWindowRect(app.hwnd, &mr);
         int w = mr.right - mr.left, h = mr.bottom - mr.top;
@@ -1197,6 +1198,8 @@ void linkTick(AppState& app) {
         }
         ensureFriendCat(app);
         auto& f = app.friendCat;
+        f.settings.showKeyBadges = app.settings.showKeyBadges;
+        f.settings.showMouseBadges = app.settings.showMouseBadges;
         bool hadProfile = f.driver.hasProfile;
         int button = -1;
         bool down = false;
@@ -1322,7 +1325,6 @@ void appendLinkMenu(AppState& app, HMENU menu) {
     AppendMenuW(sub, MF_POPUP, (UINT_PTR)server, L"新配对码使用的服务器");
     std::wstring nickItem = L"我的昵称：" + (app.nickname.empty() ? std::wstring(L"未设置") : app.nickname) + L"…";
     AppendMenuW(sub, MF_STRING, CMD_LINK_NICKNAME, nickItem.c_str());
-    AppendMenuW(sub, MF_STRING | (app.showFriendCat ? MF_CHECKED : 0), CMD_LINK_SHOW_FRIEND, L"显示朋友的猫");
     AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(sub, MF_STRING, CMD_LINK_DEMO, L"\U0001F3AC 演示：模拟一位朋友");
     AppendMenuW(sub, MF_STRING, CMD_LINK_EXPLAIN, L"对方能看到什么？");
@@ -1375,7 +1377,7 @@ void handleLinkCommand(AppState& app, UINT cmd) {
         case CMD_LINK_SHOW_FRIEND:
             app.showFriendCat = !app.showFriendCat;
             regWrite(L"LinkShowFriend", nullptr, app.showFriendCat ? 1 : 0);
-            showFriendWindow(app, app.showFriendCat && app.link.status() != catlink::Status::Off);
+            showFriendWindow(app, app.showFriendCat && (app.link.status() != catlink::Status::Off || nowSeconds() < app.demoUntil));
             break;
         case CMD_LINK_NICKNAME: {
             std::wstring name = app.nickname;
@@ -1420,7 +1422,14 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, stats.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? L"\u9690\u85CF\u5C0F\u732B" : L"\u663E\u793A\u5C0F\u732B");
+    // Which cats to show: ours and the friend's (Cat Link) independently, or all at once.
+    HMENU showMenu = CreatePopupMenu();
+    AppendMenuW(showMenu, MF_STRING | (app.isVisible ? MF_CHECKED : 0), CMD_TOGGLE_VISIBLE, L"我的猫");
+    AppendMenuW(showMenu, MF_STRING | (app.showFriendCat ? MF_CHECKED : 0), CMD_LINK_SHOW_FRIEND, L"朋友的猫");
+    AppendMenuW(showMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(showMenu, MF_STRING, CMD_SHOW_ALL, L"全部显示");
+    AppendMenuW(showMenu, MF_STRING, CMD_HIDE_ALL, L"全部隐藏");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)showMenu, L"显示的猫咪");
     AppendMenuW(menu, MF_STRING | (app.settings.fullClickThrough ? MF_CHECKED : 0), CMD_TOGGLE_CLICKTHROUGH, L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Ctrl+Alt+Shift+P / \u6309\u4F4FAlt\u53EF\u53F3\u952E)");
     AppendMenuW(menu, MF_STRING | (app.settings.alwaysOnTop ? MF_CHECKED : 0), CMD_TOGGLE_TOPMOST, L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A");
     AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8");
@@ -1505,8 +1514,17 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_TOGGLE_VISIBLE:
             app.isVisible = !app.isVisible;
             ShowWindow(app.hwnd, app.isVisible ? SW_SHOWNOACTIVATE : SW_HIDE);
-            showFriendWindow(app, app.isVisible && app.link.status() != catlink::Status::Off);
             break;
+        case CMD_SHOW_ALL:
+        case CMD_HIDE_ALL: {
+            bool show = cmd == CMD_SHOW_ALL;
+            app.isVisible = show;
+            ShowWindow(app.hwnd, show ? SW_SHOWNOACTIVATE : SW_HIDE);
+            app.showFriendCat = show;
+            regWrite(L"LinkShowFriend", nullptr, show ? 1 : 0);
+            showFriendWindow(app, show && (app.link.status() != catlink::Status::Off || nowSeconds() < app.demoUntil));
+            break;
+        }
         case CMD_TOGGLE_CLICKTHROUGH:
             app.settings.fullClickThrough = !app.settings.fullClickThrough;
             app.settings.saveToRegistry();
@@ -1668,6 +1686,7 @@ void renderFriendCat(AppState& app, float dt) {
     f.settings.petInteraction = app.settings.petInteraction;
     f.settings.footEasterEgg = app.settings.footEasterEgg;
     f.settings.showMouseBadges = app.settings.showMouseBadges;
+    f.settings.showKeyBadges = app.settings.showKeyBadges;   // bubbles show the random stand-in keys
     f.settings.showKeyLegends = app.settings.showKeyLegends;
     f.driver.prepareFrame(now);
     f.physics.step(dt, wr, f.driver.input, f.settings);
@@ -1724,13 +1743,21 @@ void renderFriendCat(AppState& app, float dt) {
 }
 
 void tickAndRender(AppState& app) {
-    if (!app.isVisible || !app.hwnd) return;
+    if (!app.hwnd) return;
 
     double now = nowSeconds();
     app.lastRenderTime = now;
-    float dt = (float)(now - app.lastTickTime);
+    double elapsed = now - app.lastTickTime;
+    float dt = (float)elapsed;
     app.lastTickTime = now;
     if (dt <= 0.0f || dt > 0.2f) dt = 1.0f / 60.0f;
+
+    if (!app.isVisible) {
+        // Our cat is hidden: still track mouse speed (Cat Link sends it) and draw the friend's cat.
+        app.input.pollMouse((float)std::clamp(elapsed, 0.001, 0.5));
+        renderFriendCat(app, dt);
+        return;
+    }
 
     // Optional menu demo typing burst
     if (app.demoActive) {
@@ -2641,7 +2668,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     bool running = true;
     while (running) {
         double now = nowSeconds();
-        double waitSec = app.isVisible ? (app.nextFrameTime - now) : 0.25;
+        bool frameRate = app.isVisible || app.friendCat.shown || app.link.connected();
+        double waitSec = frameRate ? (app.nextFrameTime - now) : 0.25;
         if (waitSec > 0.0) {
             MsgWaitForMultipleObjectsEx(0, nullptr, (DWORD)(waitSec * 1000.0), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
