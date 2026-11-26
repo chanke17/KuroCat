@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var availableAssetURL: URL?
     private var isUpdating = false
     private var isHandingOverToNewerCopy = false
+    private let catLink = CatLinkController()
 
     private var currentAppVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.3"
@@ -39,16 +40,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         engine.onKeyDown = { [weak self] key in
             DispatchQueue.main.async {
                 self?.overlayWindow.catView.physics.triggerKeyDown(key)
+                self?.catLink.noteKeyDown(key)
+            }
+        }
+        engine.onKeyUp = { [weak self] key in
+            DispatchQueue.main.async {
+                self?.catLink.noteKeyUp(key)
             }
         }
         engine.onMouseClick = { [weak self] button, isDown in
             DispatchQueue.main.async {
                 self?.overlayWindow.catView.physics.triggerMouseClick(button: button, isDown: isDown)
+                self?.catLink.noteClick(button: button, isDown: isDown)
             }
         }
         engine.onScroll = { [weak self] delta in
             DispatchQueue.main.async {
                 self?.overlayWindow.catView.physics.triggerScroll(delta: delta)
+                self?.catLink.noteScroll(delta)
             }
         }
         engine.start()
@@ -57,11 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let audio = AudioOutputMonitor.shared
         audio.onHeadphonesChange = { [weak self] isHeadphones, animated in
             self?.overlayWindow.catView.physics.setHeadphonesConnected(isHeadphones, animated: animated)
+            self?.catLink.profileChanged()
         }
         audio.onPlayingChange = { [weak self] playing in
             self?.overlayWindow.catView.physics.headphonesPlaying = playing
+            self?.catLink.profileChanged()
         }
         audio.start()
+
+        // Cat Link: show a friend's cat, and ours on their screen
+        catLink.menuProvider = { [weak self] in self?.buildMenu() ?? NSMenu() }
+        catLink.onIndicatorChange = { [weak self] linked in self?.updateLinkIndicator(linked) }
+        catLink.setup(mainWindow: overlayWindow)
 
         setupStatusItem()
         if isAutoStartEnabled() {
@@ -82,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Quitting during launch because a newer copy is running: leave its stats alone.
         if isHandingOverToNewerCopy { return }
         renderTimer?.invalidate()
+        catLink.shutdown()
         InputEngine.shared.flushStats()
         InputEngine.shared.stop()
     }
@@ -167,6 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             view.physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
             view.updateHoverAndClickThrough()
             view.needsDisplay = true
+            self.catLink.step(dt: dt)
         }
         RunLoop.main.add(timer, forMode: .common)
         renderTimer = timer
@@ -183,6 +201,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+    }
+
+    /// A small 🔗 next to the menu bar cat while linked with an online friend.
+    private func updateLinkIndicator(_ linked: Bool) {
+        guard let statusItem, let button = statusItem.button else { return }
+        statusItem.length = linked ? NSStatusItem.variableLength : NSStatusItem.squareLength
+        button.title = linked ? "🔗" : ""
+        button.imagePosition = linked ? .imageLeft : .imageOnly
+        button.toolTip = linked ? "KuroCat 黑猫键盘桌宠 · 猫咪连线中" : "KuroCat 黑猫键盘桌宠"
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -272,6 +299,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         earbudItem.state = settings.earbudAnimation ? .on : .off
         menu.addItem(earbudItem)
 
+        menu.addItem(.separator())
+        menu.addItem(catLink.menuItem())
         menu.addItem(.separator())
 
         // Scale submenu
@@ -385,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             overlayWindow.orderOut(nil)
         }
+        catLink.setVisible(isPetVisible)
     }
 
     @objc private func toggleClickThrough() {
@@ -394,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleFullScreenOverlay() {
         CatSettings.shared.fullScreenOverlay.toggle()
         overlayWindow.applyWindowLevelAndBehavior()
+        catLink.applyWindowLevel()
     }
 
     // MARK: - Launch at Login (macOS LaunchAgent — works reliably for signed & ad-hoc builds)
@@ -471,6 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectScale(_ sender: NSMenuItem) {
         guard let num = sender.representedObject as? NSNumber else { return }
         overlayWindow.applyScale(CGFloat(num.doubleValue))
+        catLink.applyScale(CGFloat(num.doubleValue))
     }
 
     @objc private func selectCoatTheme(_ sender: NSMenuItem) {
@@ -486,22 +518,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .shorthair, .orangeWhite:
             CatSettings.shared.eyeTheme = .softAmber
         }
+        catLink.profileChanged()
     }
 
     @objc private func selectKeyboardTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let theme = KeyboardTheme(rawValue: raw) else { return }
         CatSettings.shared.keyboardTheme = theme
+        catLink.profileChanged()
     }
 
     @objc private func selectEyeTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let theme = EyeColorTheme(rawValue: raw) else { return }
         CatSettings.shared.eyeTheme = theme
+        catLink.profileChanged()
     }
 
     @objc private func resetPosition() {
         overlayWindow.resetPosition()
+        catLink.resetPosition()
     }
 
     @objc private func runDemoBurst() {
