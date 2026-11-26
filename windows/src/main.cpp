@@ -17,6 +17,8 @@
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
+#include "CatLink.hpp"
+#include <UIAutomation.h>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -25,6 +27,8 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "wtsapi32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "oleaut32.lib")
 
 namespace {
 
@@ -32,6 +36,9 @@ constexpr const wchar_t* APP_VERSION = L"1.3.3";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
+constexpr const wchar_t* FRIEND_CLASS = L"KuroCatFriendWindowClass";
+// This fork has its own features (e.g. Cat Link): never offer to "update" it to the upstream release.
+constexpr bool UPDATE_CHECKS_ENABLED = false;
 constexpr double FRAME_INTERVAL = 1.0 / 60.0;
 constexpr const wchar_t* UPDATE_PAGE_URL = L"https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L";
 constexpr const wchar_t* UPDATE_WIN_EXE_PATH = L"/downloads/KuroCat-Windows-x64.exe?sharecode=JVAABIVZ7L";
@@ -78,6 +85,15 @@ enum MenuCmd : UINT {
     CMD_OPEN_UPDATE,
     CMD_RELAUNCH_ADMIN,
     CMD_TOGGLE_RUN_AS_ADMIN,
+    CMD_LINK_CREATE,
+    CMD_LINK_JOIN,
+    CMD_LINK_RECONNECT,
+    CMD_LINK_COPY,
+    CMD_LINK_DISCONNECT,
+    CMD_LINK_SERVER_CN,
+    CMD_LINK_SERVER_GLOBAL,
+    CMD_LINK_SHOW_FRIEND,
+    CMD_LINK_EXPLAIN,
     CMD_QUIT
 };
 
@@ -127,6 +143,55 @@ struct AppState {
     bool warnedElevatedForeground = false;
     HWINEVENTHOOK foregroundHook = nullptr;
     bool sessionNotifyRegistered = false;
+
+    // Cat Link: our cat on a friend's screen, theirs on ours
+    catlink::Session link;
+    catlink::Status lastLinkStatus = catlink::Status::Off;
+    char linkServer = 'C';
+    bool showFriendCat = true;
+    std::wstring savedLinkCode;
+    struct FriendCat {
+        HWND hwnd = nullptr;
+        bool shown = false;
+        CatSettings settings;
+        catlink::RemoteDriver driver;
+        CatPhysics physics;
+        bool dragging = false;
+        POINT dragStartCursor = {};
+        POINT dragStartWinOrigin = {};
+        bool hasLastHover = false;
+        Pt lastHover = {};
+        std::wstring label;
+        bool labelDim = false;
+        HDC memDC = nullptr;
+        HBITMAP dibBmp = nullptr;
+        HBITMAP oldBmp = nullptr;
+        void* dibBits = nullptr;
+        int bufW = 0, bufH = 0;
+
+        void destroyBuffer() {
+            if (memDC && oldBmp) SelectObject(memDC, oldBmp);
+            if (dibBmp) DeleteObject(dibBmp);
+            if (memDC) DeleteDC(memDC);
+            memDC = nullptr; dibBmp = nullptr; oldBmp = nullptr; dibBits = nullptr; bufW = bufH = 0;
+        }
+        void ensureBuffer(int w, int h) {
+            if (w == bufW && h == bufH && memDC && dibBits) return;
+            destroyBuffer();
+            HDC screenDC = GetDC(nullptr);
+            memDC = CreateCompatibleDC(screenDC);
+            ReleaseDC(nullptr, screenDC);
+            BITMAPINFO bmi = {};
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = w;
+            bmi.bmiHeader.biHeight = -h;
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            dibBmp = CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, &dibBits, nullptr, 0);
+            if (dibBmp) { oldBmp = (HBITMAP)SelectObject(memDC, dibBmp); bufW = w; bufH = h; }
+        }
+    } friendCat;
 
     void destroyBuffer() {
         if (memDC && oldBmp) SelectObject(memDC, oldBmp);
@@ -771,6 +836,352 @@ void setClickThrough(HWND hwnd, bool transparent) {
     }
 }
 
+// MARK: - Cat Link
+
+/// Tracks whether the focused control is a password field (UI Automation, on a background thread), so
+/// no keyboard activity is shared while the user types a password. Best effort: it covers browsers,
+/// Win32 and UWP apps that expose UI Automation.
+class PasswordFocusWatcher {
+public:
+    std::atomic<bool> isPassword{false};
+    void start() {
+        event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!event_) return;
+        std::thread([this] { run(); }).detach();
+        hook_ = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS, nullptr, onFocus, 0, 0,
+                                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    }
+    void stop() { if (hook_) UnhookWinEvent(hook_); hook_ = nullptr; }
+private:
+    HANDLE event_ = nullptr;
+    HWINEVENTHOOK hook_ = nullptr;
+    static void CALLBACK onFocus(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD);
+    void run() {
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return;
+        IUIAutomation* uia = nullptr;
+        if (FAILED(CoCreateInstance(__uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER,
+                                    __uuidof(IUIAutomation), reinterpret_cast<void**>(&uia))) || !uia) return;
+        while (WaitForSingleObject(event_, INFINITE) == WAIT_OBJECT_0) {
+            IUIAutomationElement* el = nullptr;
+            BOOL pw = FALSE;
+            if (SUCCEEDED(uia->GetFocusedElement(&el)) && el) {
+                el->get_CurrentIsPassword(&pw);
+                el->Release();
+            }
+            isPassword = pw != FALSE;
+        }
+    }
+};
+PasswordFocusWatcher g_passwordWatcher;
+void CALLBACK PasswordFocusWatcher::onFocus(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
+    if (g_passwordWatcher.event_) SetEvent(g_passwordWatcher.event_);
+}
+
+const wchar_t* LINK_WHAT_IS_SHARED =
+    L"对方会看到：你在打字（只知道是左手还是右手在敲，不知道按了哪个键）、鼠标的移动和点击（包括光标在屏幕上的大致位置）、你的猫咪皮肤。你们也能隔空摸对方的猫。\n"
+    L"输入密码时会自动暂停发送键盘动作。所有内容都用配对码加密，中转服务器也看不到内容。";
+
+std::wstring regReadString(const wchar_t* name) {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\KuroCat", 0, KEY_READ, &k) != ERROR_SUCCESS) return L"";
+    wchar_t buf[128] = {};
+    DWORD size = sizeof(buf) - sizeof(wchar_t), type = 0;
+    std::wstring out;
+    if (RegQueryValueExW(k, name, nullptr, &type, (LPBYTE)buf, &size) == ERROR_SUCCESS && type == REG_SZ) out = buf;
+    RegCloseKey(k);
+    return out;
+}
+
+DWORD regReadDword(const wchar_t* name, DWORD def) {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\KuroCat", 0, KEY_READ, &k) != ERROR_SUCCESS) return def;
+    DWORD val = def, size = sizeof(val);
+    if (RegQueryValueExW(k, name, nullptr, nullptr, (LPBYTE)&val, &size) != ERROR_SUCCESS) val = def;
+    RegCloseKey(k);
+    return val;
+}
+
+void regWrite(const wchar_t* name, const std::wstring* str, DWORD dword) {
+    HKEY k = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\KuroCat", 0, nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) != ERROR_SUCCESS) return;
+    if (str) RegSetValueExW(k, name, 0, REG_SZ, (const BYTE*)str->c_str(), (DWORD)((str->size() + 1) * sizeof(wchar_t)));
+    else RegSetValueExW(k, name, 0, REG_DWORD, (const BYTE*)&dword, sizeof(dword));
+    RegCloseKey(k);
+}
+
+std::string coatName(CatCoatTheme t) {
+    switch (t) {
+        case CatCoatTheme::Siamese: return "siamese";
+        case CatCoatTheme::Shorthair: return "shorthair";
+        case CatCoatTheme::OrangeWhite: return "orangeWhite";
+        default: return "classicBlack";
+    }
+}
+std::string keyboardName(KeyboardTheme t) {
+    switch (t) {
+        case KeyboardTheme::MidnightHacker: return "midnightHacker";
+        case KeyboardTheme::RetroCream: return "retroCream";
+        default: return "classicMilk";
+    }
+}
+std::string eyeName(EyeColorTheme t) {
+    switch (t) {
+        case EyeColorTheme::SiameseBlue: return "siameseBlue";
+        case EyeColorTheme::WarmAmber: return "warmAmber";
+        case EyeColorTheme::IceCyan: return "iceCyan";
+        case EyeColorTheme::SoftAmber: return "softAmber";
+        case EyeColorTheme::ReferenceHazel: return "referenceHazel";
+        default: return "neonChartreuse";
+    }
+}
+
+void applyFriendProfile(AppState& app) {
+    auto& f = app.friendCat;
+    const auto& d = f.driver;
+    if (d.coat) {
+        const std::string& c = *d.coat;
+        f.settings.coatTheme = c == "siamese" ? CatCoatTheme::Siamese : c == "shorthair" ? CatCoatTheme::Shorthair
+                             : c == "orangeWhite" ? CatCoatTheme::OrangeWhite : CatCoatTheme::ClassicBlack;
+    }
+    if (d.kb) {
+        const std::string& k = *d.kb;
+        f.settings.keyboardTheme = k == "midnightHacker" ? KeyboardTheme::MidnightHacker
+                                 : k == "retroCream" ? KeyboardTheme::RetroCream : KeyboardTheme::ClassicMilk;
+    }
+    if (d.eye) {
+        const std::string& e = *d.eye;
+        f.settings.eyeTheme = e == "siameseBlue" ? EyeColorTheme::SiameseBlue : e == "warmAmber" ? EyeColorTheme::WarmAmber
+                            : e == "iceCyan" ? EyeColorTheme::IceCyan : e == "softAmber" ? EyeColorTheme::SoftAmber
+                            : e == "referenceHazel" ? EyeColorTheme::ReferenceHazel : EyeColorTheme::NeonChartreuse;
+    }
+}
+
+void updateFriendLabel(AppState& app) {
+    auto& f = app.friendCat;
+    std::string name = app.link.friendName();
+    std::wstring who = name.empty() ? L"朋友的猫" : catlink::widen(name) + L" 的猫";
+    switch (app.link.status()) {
+        case catlink::Status::Linked: f.label = who + L" · 在线"; f.labelDim = false; break;
+        case catlink::Status::FriendOffline: f.label = who + L" · 离线"; f.labelDim = true; break;
+        case catlink::Status::Connecting:
+        case catlink::Status::Reconnecting: f.label = who + L" · 正在重新连接…"; f.labelDim = true; break;
+        default: f.label = who; f.labelDim = true; break;
+    }
+}
+
+void setTrayTip(AppState& app, const wchar_t* tip) {
+    wcsncpy_s(app.nid.szTip, tip, _TRUNCATE);
+    app.nid.uFlags = NIF_TIP;
+    Shell_NotifyIconW(NIM_MODIFY, &app.nid);
+    app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+}
+
+void showFriendWindow(AppState& app, bool show) {
+    auto& f = app.friendCat;
+    if (!f.hwnd) return;
+    bool want = show && app.isVisible && app.showFriendCat;
+    if (want == f.shown) return;
+    f.shown = want;
+    ShowWindow(f.hwnd, want ? SW_SHOWNOACTIVATE : SW_HIDE);
+}
+
+void ensureFriendCat(AppState& app) {
+    auto& f = app.friendCat;
+    if (!f.hwnd) {
+        f.settings = app.settings;
+        f.settings.showKeyBadges = false;   // the friend's keys are random stand-ins
+        RECT mr = {};
+        GetWindowRect(app.hwnd, &mr);
+        int w = mr.right - mr.left, h = mr.bottom - mr.top;
+        int x = mr.left - w - 12, y = mr.top;
+        if (regReadDword(L"FriendHasPos", 0)) { x = (int)regReadDword(L"FriendPosX", x); y = (int)regReadDword(L"FriendPosY", y); }
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (x + w < vx + 40 || x > vx + vw - 40 || y + h < vy + 40 || y > vy + vh - 40) { x = mr.left - w - 12; y = mr.top; }
+        DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
+                      | (app.settings.alwaysOnTop ? WS_EX_TOPMOST : 0);
+        f.hwnd = CreateWindowExW(exStyle, FRIEND_CLASS, L"KuroCat Friend", WS_POPUP, x, y, w, h,
+                                 nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    }
+    showFriendWindow(app, true);
+}
+
+void onLinkStatusChanged(AppState& app, catlink::Status before, catlink::Status now) {
+    using catlink::Status;
+    auto& f = app.friendCat;
+    if (now == Status::FriendOffline || now == Status::Off) f.driver.releaseAll();
+    if (now == Status::Off) showFriendWindow(app, false);
+    if (now == Status::Linked && before != Status::Linked) {
+        std::string name = app.link.friendName();
+        std::wstring body = (name.empty() ? L"朋友" : catlink::widen(name)) + L" 的猫出现在你的桌面上了，它会跟着对方一起打字、动鼠标。";
+        showTrayBalloon(app, L"🔗 猫咪连线成功", body.c_str());
+    }
+    setTrayTip(app, now == Status::Linked ? L"KuroCat 黑猫桌宠 · 猫咪连线中" : L"KuroCat 黑猫桌宠");
+    updateFriendLabel(app);
+}
+
+catlink::Event linkProfile(const AppState& app) {
+    catlink::Event e;
+    e.k = "hello";
+    e.coat = coatName(app.settings.coatTheme);
+    e.kb = keyboardName(app.settings.keyboardTheme);
+    e.eye = eyeName(app.settings.eyeTheme);
+    e.hp = false;
+    e.pl = false;
+    return e;
+}
+
+void startLink(AppState& app, const catlink::Code& code) {
+    app.savedLinkCode = code.display();
+    regWrite(L"LinkCode", &app.savedLinkCode, 0);
+    regWrite(L"LinkEnabled", nullptr, 1);
+    app.link.start(code);
+}
+
+/// Every main-loop pass: networking, the friend's events, status changes.
+void linkTick(AppState& app) {
+    double now = nowSeconds();
+    app.link.update(now, app.input);
+    for (auto& due : app.link.takeDue(now)) {
+        const catlink::Event& e = due.e;
+        if (e.k == "pet") {   // the friend is petting OUR cat from their screen
+            Pt cp = { (float)e.x.value_or(184.0), (float)e.y.value_or(100.0) };
+            app.physics.registerPetStroke(cp, (float)e.d.value_or(6.0), e.h.value_or(true), app.settings);
+            continue;
+        }
+        ensureFriendCat(app);
+        auto& f = app.friendCat;
+        int button = -1;
+        bool down = false;
+        PhysicalKey key = f.driver.apply(e, now, button, down);
+        if (key != PhysicalKey::None) f.physics.triggerKeyDown(key, f.settings);
+        if (button >= 0) f.physics.triggerMouseClick(button, down, f.settings);
+        if (e.k == "hello") { applyFriendProfile(app); updateFriendLabel(app); }
+    }
+    catlink::Status st = app.link.status();
+    if (st != app.lastLinkStatus) {
+        catlink::Status before = app.lastLinkStatus;
+        app.lastLinkStatus = st;
+        onLinkStatusChanged(app, before, st);
+    }
+}
+
+std::wstring readClipboardText(HWND owner) {
+    std::wstring s;
+    if (!OpenClipboard(owner)) return s;
+    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+        if (auto* p = static_cast<const wchar_t*>(GlobalLock(h))) { s = p; GlobalUnlock(h); }
+    }
+    CloseClipboard();
+    return s;
+}
+
+void writeClipboardText(HWND owner, const std::wstring& s) {
+    if (!OpenClipboard(owner)) return;
+    EmptyClipboard();
+    size_t bytes = (s.size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        if (void* dst = GlobalLock(g)) { memcpy(dst, s.c_str(), bytes); GlobalUnlock(g); }
+        if (!SetClipboardData(CF_UNICODETEXT, g)) GlobalFree(g);
+    }
+    CloseClipboard();
+}
+
+void appendLinkMenu(AppState& app, HMENU menu) {
+    using catlink::Status;
+    HMENU sub = CreatePopupMenu();
+    Status st = app.link.status();
+    std::string fname = app.link.friendName();
+    std::wstring friendW = fname.empty() ? L"朋友" : catlink::widen(fname);
+    std::wstring status;
+    switch (st) {
+        case Status::Off: status = L"未连线"; break;
+        case Status::Connecting: status = L"正在连接服务器…"; break;
+        case Status::WaitingForFriend: status = L"已连接，等待朋友输入配对码"; break;
+        case Status::Linked: status = L"已和 " + friendW + L" 连线 \u25CF"; break;
+        case Status::FriendOffline: status = friendW + L" 已离线，等待对方回来"; break;
+        case Status::Reconnecting: status = L"网络中断，正在重新连接…"; break;
+    }
+    AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, (L"状态：" + status).c_str());
+    std::wstring err = app.link.lastError();
+    if (st == Status::Reconnecting && !err.empty()) AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, (L"原因：" + err).c_str());
+    AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+    if (st == Status::Off) {
+        AppendMenuW(sub, MF_STRING, CMD_LINK_CREATE, L"创建配对码（自动复制，发给朋友）");
+        AppendMenuW(sub, MF_STRING, CMD_LINK_JOIN, L"粘贴朋友的配对码并连线（请先复制配对码）");
+        if (!app.savedLinkCode.empty()) AppendMenuW(sub, MF_STRING, CMD_LINK_RECONNECT, (L"重新连线（" + app.savedLinkCode + L"）").c_str());
+    } else if (auto code = app.link.code()) {
+        AppendMenuW(sub, MF_STRING, CMD_LINK_COPY, (L"复制配对码 " + code->display()).c_str());
+        AppendMenuW(sub, MF_STRING, CMD_LINK_DISCONNECT, L"断开连线");
+    }
+    AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+    HMENU server = CreatePopupMenu();
+    AppendMenuW(server, MF_STRING | (app.linkServer == 'C' ? MF_CHECKED : 0), CMD_LINK_SERVER_CN, L"EMQX 中国（上海）");
+    AppendMenuW(server, MF_STRING | (app.linkServer == 'G' ? MF_CHECKED : 0), CMD_LINK_SERVER_GLOBAL, L"EMQX 国际（美国）");
+    AppendMenuW(sub, MF_POPUP, (UINT_PTR)server, L"新配对码使用的服务器");
+    AppendMenuW(sub, MF_STRING | (app.showFriendCat ? MF_CHECKED : 0), CMD_LINK_SHOW_FRIEND, L"显示朋友的猫");
+    AppendMenuW(sub, MF_STRING, CMD_LINK_EXPLAIN, L"对方能看到什么？");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, st == Status::Linked ? L"\U0001F517 猫咪连线（已连线）" : L"\U0001F517 猫咪连线");
+}
+
+void handleLinkCommand(AppState& app, UINT cmd) {
+    HWND owner = app.menuOwnerHwnd ? app.menuOwnerHwnd : app.hwnd;
+    switch (cmd) {
+        case CMD_LINK_CREATE: {
+            catlink::Code code = catlink::Code::generate(app.linkServer);
+            startLink(app, code);
+            writeClipboardText(owner, code.display());
+            std::wstring msg = L"配对码已复制到剪贴板：\n\n    " + code.display()
+                + L"\n\n把它发给你的朋友（比如用微信）。朋友在 KuroCat 菜单「猫咪连线」里粘贴它，你们的猫就会出现在对方的屏幕上。"
+                + L"\n配对码就是你们的密钥，请只发给这位朋友。\n\n" + LINK_WHAT_IS_SHARED;
+            MessageBoxW(nullptr, msg.c_str(), L"KuroCat 猫咪连线", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+            break;
+        }
+        case CMD_LINK_JOIN: {
+            auto code = catlink::Code::parse(readClipboardText(owner));
+            if (!code) {
+                MessageBoxW(nullptr, L"剪贴板里没有找到配对码。\n\n请先复制朋友发来的配对码（形如 KC-C-XXXX-XXXX-XXXX-XXXX-XXXX），再点这里。",
+                            L"KuroCat 猫咪连线", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                break;
+            }
+            std::wstring msg = L"要和这个配对码连线吗？\n\n    " + code->display() + L"\n\n" + LINK_WHAT_IS_SHARED;
+            if (MessageBoxW(nullptr, msg.c_str(), L"KuroCat 猫咪连线", MB_OKCANCEL | MB_ICONQUESTION | MB_TOPMOST) == IDOK) {
+                startLink(app, *code);
+            }
+            break;
+        }
+        case CMD_LINK_RECONNECT:
+            if (auto code = catlink::Code::parse(app.savedLinkCode)) startLink(app, *code);
+            break;
+        case CMD_LINK_COPY:
+            if (auto code = app.link.code()) writeClipboardText(owner, code->display());
+            break;
+        case CMD_LINK_DISCONNECT:
+            regWrite(L"LinkEnabled", nullptr, 0);
+            app.link.stop();
+            break;
+        case CMD_LINK_SERVER_CN:
+        case CMD_LINK_SERVER_GLOBAL: {
+            app.linkServer = cmd == CMD_LINK_SERVER_CN ? 'C' : 'G';
+            std::wstring v(1, (wchar_t)app.linkServer);
+            regWrite(L"LinkServer", &v, 0);
+            break;
+        }
+        case CMD_LINK_SHOW_FRIEND:
+            app.showFriendCat = !app.showFriendCat;
+            regWrite(L"LinkShowFriend", nullptr, app.showFriendCat ? 1 : 0);
+            showFriendWindow(app, app.showFriendCat && app.link.status() != catlink::Status::Off);
+            break;
+        case CMD_LINK_EXPLAIN: {
+            std::wstring msg = std::wstring(LINK_WHAT_IS_SHARED) + L"\n\n断开连线后就不再发送任何内容。";
+            MessageBoxW(nullptr, msg.c_str(), L"猫咪连线会分享什么？", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 void showContextMenu(AppState& app, POINT screenPt) {
     HMENU menu = CreatePopupMenu();
 
@@ -844,9 +1255,14 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)scaleMenu, L"\u5C3A\u5BF8\u5927\u5C0F");
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    appendLinkMenu(app, menu);
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_DEMO_BURST, L"\u6F14\u793A\u6253\u5B57\u52A8\u753B");
     AppendMenuW(menu, MF_STRING, CMD_RESET_POS, L"\u91CD\u7F6E\u4F4D\u7F6E\u5230\u53F3\u4E0B\u89D2");
-    if (!app.availableUpdateVersion.empty()) {
+    if (!UPDATE_CHECKS_ENABLED) {
+        std::wstring verTxt = std::wstring(L"版本 v") + APP_VERSION + L"（分支版，已关闭更新检查）";
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, verTxt.c_str());
+    } else if (!app.availableUpdateVersion.empty()) {
         std::wstring upTxt = app.isUpdating
             ? (L"\u23F3 \u6B63\u5728\u4E0B\u8F7D\u66F4\u65B0 " + app.availableUpdateVersion + L"...")
             : (L"\U0001F195 \u53D1\u73B0\u65B0\u7248\u672C " + app.availableUpdateVersion + L" (\u70B9\u51FB\u81EA\u52A8\u66F4\u65B0)");
@@ -868,6 +1284,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_TOGGLE_VISIBLE:
             app.isVisible = !app.isVisible;
             ShowWindow(app.hwnd, app.isVisible ? SW_SHOWNOACTIVATE : SW_HIDE);
+            showFriendWindow(app, app.isVisible && app.link.status() != catlink::Status::Off);
             break;
         case CMD_TOGGLE_CLICKTHROUGH:
             app.settings.fullClickThrough = !app.settings.fullClickThrough;
@@ -963,12 +1380,19 @@ void showContextMenu(AppState& app, POINT screenPt) {
                 quitApp(app);
             }
             break;
+        case CMD_LINK_CREATE: case CMD_LINK_JOIN: case CMD_LINK_RECONNECT: case CMD_LINK_COPY:
+        case CMD_LINK_DISCONNECT: case CMD_LINK_SERVER_CN: case CMD_LINK_SERVER_GLOBAL:
+        case CMD_LINK_SHOW_FRIEND: case CMD_LINK_EXPLAIN:
+            handleLinkCommand(app, cmd);
+            break;
         case CMD_QUIT:
             quitApp(app);
             break;
         default:
             break;
     }
+    // Theme changes: tell the friend right away.
+    if (cmd >= CMD_COAT_BLACK && cmd <= CMD_EYE_REFERENCE_HAZEL) app.link.profileChanged();
 }
 
 bool physicsLooksSane(const CatPhysics& p) {
@@ -983,6 +1407,95 @@ bool physicsLooksSane(const CatPhysics& p) {
         if (!std::isfinite(v) || std::fabs(v) > 1.0e6f) return false;
     }
     return true;
+}
+
+void drawFriendLabel(Gdiplus::Graphics& g, const std::wstring& text, bool dim) {
+    if (text.empty()) return;
+    Gdiplus::FontFamily yahei(L"Microsoft YaHei UI");
+    const Gdiplus::FontFamily* family = yahei.IsAvailable() ? &yahei : Gdiplus::FontFamily::GenericSansSerif();
+    Gdiplus::Font font(family, 11.0f, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+    g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+    Gdiplus::RectF bounds;
+    g.MeasureString(text.c_str(), -1, &font, Gdiplus::PointF(0.0f, 0.0f), &bounds);
+    float h = bounds.Height + 4.0f, w = bounds.Width + 14.0f;
+    float x = CatPhysics::SeatAnchor.x - w / 2.0f, y = 22.0f;
+    Gdiplus::GraphicsPath pill;
+    pill.AddArc(x, y, h, h, 90.0f, 180.0f);
+    pill.AddArc(x + w - h, y, h, h, 270.0f, 180.0f);
+    pill.CloseFigure();
+    Gdiplus::SolidBrush bg(Gdiplus::Color(dim ? 90 : 158, 0, 0, 0));
+    g.FillPath(&bg, &pill);
+    Gdiplus::SolidBrush fg(Gdiplus::Color(dim ? 185 : 255, 255, 255, 255));
+    g.DrawString(text.c_str(), -1, &font, Gdiplus::PointF(x + 7.0f, y + 2.0f), &fg);
+}
+
+/// The friend's cat: same physics and renderer, driven by their events instead of this PC's input.
+void renderFriendCat(AppState& app, float dt) {
+    auto& f = app.friendCat;
+    if (!f.hwnd || !f.shown) return;
+    double now = nowSeconds();
+    RECT wr = {};
+    GetWindowRect(f.hwnd, &wr);
+    int w = std::max(1, (int)(wr.right - wr.left));
+    int h = std::max(1, (int)(wr.bottom - wr.top));
+
+    f.settings.fullClickThrough = app.settings.fullClickThrough;
+    f.settings.petInteraction = app.settings.petInteraction;
+    f.settings.footEasterEgg = app.settings.footEasterEgg;
+    f.settings.showMouseBadges = app.settings.showMouseBadges;
+    f.settings.showKeyLegends = app.settings.showKeyLegends;
+    f.driver.prepareFrame(now);
+    f.physics.step(dt, wr, f.driver.input, f.settings);
+    if (!physicsLooksSane(f.physics)) f.physics = CatPhysics();
+
+    // Petting the friend's cat: it purrs here, and their own cat feels it too.
+    if (!f.dragging) {
+        POINT cur = {};
+        GetCursorPos(&cur);
+        if (PtInRect(&wr, cur)) {
+            Pt cp = { (float)(cur.x - wr.left) / (float)w * CatPhysics::CanvasWidth,
+                      (float)(cur.y - wr.top) / (float)h * CatPhysics::CanvasHeight };
+            CatHitZone zone = CatRenderer::hitTest(cp, f.physics);
+            if (zone == CatHitZone::Head || zone == CatHitZone::Body) {
+                if (f.hasLastHover) {
+                    float d = std::hypot(cp.x - f.lastHover.x, cp.y - f.lastHover.y);
+                    if (d > 1.2f && d < 80.0f) {
+                        f.physics.registerPetStroke(cp, d, zone == CatHitZone::Head, f.settings);
+                        app.link.notePet(cp, d, zone == CatHitZone::Head);
+                    }
+                }
+                f.lastHover = cp;
+                f.hasLastHover = true;
+            } else {
+                f.hasLastHover = false;
+            }
+            bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            setClickThrough(f.hwnd, (app.settings.fullClickThrough && !altHeld) || zone == CatHitZone::None);
+        } else {
+            f.hasLastHover = false;
+            setClickThrough(f.hwnd, true);
+        }
+    }
+
+    f.ensureBuffer(w, h);
+    if (!f.memDC || !f.dibBits) return;
+    Gdiplus::Bitmap bmp(w, h, w * 4, PixelFormat32bppPARGB, static_cast<BYTE*>(f.dibBits));
+    Gdiplus::Graphics g(&bmp);
+    g.Clear(Gdiplus::Color(0, 0, 0, 0));
+    g.ScaleTransform((float)w / CatPhysics::CanvasWidth, (float)h / CatPhysics::CanvasHeight);
+    CatRenderer::draw(g, f.physics, f.settings);
+    drawFriendLabel(g, f.label, f.labelDim);
+
+    POINT ptDst = { wr.left, wr.top };
+    SIZE szWnd = { w, h };
+    POINT ptSrc = { 0, 0 };
+    BLENDFUNCTION blend = {};
+    blend.BlendOp = AC_SRC_OVER;
+    blend.SourceConstantAlpha = 255;
+    blend.AlphaFormat = AC_SRC_ALPHA;
+    HDC screenDC = GetDC(nullptr);
+    if (!UpdateLayeredWindow(f.hwnd, screenDC, &ptDst, &szWnd, f.memDC, &ptSrc, 0, &blend, ULW_ALPHA)) f.destroyBuffer();
+    ReleaseDC(nullptr, screenDC);
 }
 
 void tickAndRender(AppState& app) {
@@ -1055,6 +1568,8 @@ void tickAndRender(AppState& app) {
         }
     }
 
+    renderFriendCat(app, dt);
+
     // Render 32-bit Premultiplied ARGB frame directly into DIB and present via UpdateLayeredWindow
     app.ensureBuffer(w, h);
     if (!app.memDC || !app.dibBits) return;
@@ -1093,6 +1608,57 @@ void renderIfDue(AppState& app) {
     app.nextFrameTime = (now - app.nextFrameTime < FRAME_INTERVAL) ? app.nextFrameTime + FRAME_INTERVAL
                                                                     : now + FRAME_INTERVAL;
     tickAndRender(app);
+}
+
+/// The friend's cat window: drag it around (its own saved position) and right-click for the menu.
+LRESULT CALLBACK friendWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    AppState* app = g_app;
+    if (!app) return DefWindowProcW(hwnd, msg, wParam, lParam);
+    auto& f = app->friendCat;
+    switch (msg) {
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+            break;
+        case WM_LBUTTONDOWN: {
+            bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            if (!app->settings.fullClickThrough || altHeld) {
+                f.dragging = true;
+                GetCursorPos(&f.dragStartCursor);
+                RECT wr = {};
+                GetWindowRect(hwnd, &wr);
+                f.dragStartWinOrigin = { wr.left, wr.top };
+                SetCapture(hwnd);
+            }
+            return 0;
+        }
+        case WM_MOUSEMOVE:
+            if (f.dragging) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                SetWindowPos(hwnd, nullptr, f.dragStartWinOrigin.x + (cur.x - f.dragStartCursor.x),
+                             f.dragStartWinOrigin.y + (cur.y - f.dragStartCursor.y), 0, 0,
+                             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            return 0;
+        case WM_LBUTTONUP:
+            if (f.dragging) {
+                f.dragging = false;
+                ReleaseCapture();
+                RECT wr = {};
+                GetWindowRect(hwnd, &wr);
+                regWrite(L"FriendHasPos", nullptr, 1);
+                regWrite(L"FriendPosX", nullptr, (DWORD)wr.left);
+                regWrite(L"FriendPosY", nullptr, (DWORD)wr.top);
+            }
+            return 0;
+        case WM_RBUTTONUP: {
+            POINT pt = {};
+            GetCursorPos(&pt);
+            showContextMenu(*app, pt);
+            return 0;
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1309,6 +1875,10 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     Shell_NotifyIconW(NIM_DELETE, &app->nid);
                     if (app->trayIcon) DestroyIcon(app->trayIcon);
                     app->destroyBuffer();
+                    app->link.stop();
+                    g_passwordWatcher.stop();
+                    if (app->friendCat.hwnd) { DestroyWindow(app->friendCat.hwnd); app->friendCat.hwnd = nullptr; }
+                    app->friendCat.destroyBuffer();
                 }
                 PostQuitMessage(0);
             }
@@ -1348,11 +1918,183 @@ bool shutDownRunningInstance(HWND owner, DWORD timeoutMs) {
     return gone;
 }
 
+// MARK: - Cat Link self-test (run by .github/workflows/catlink-selftest.yml on a real Windows machine)
+
+catlink::Event testHello(const char* name, const char* coat) {
+    catlink::Event e;
+    e.k = "hello"; e.n = name; e.coat = coat; e.kb = "classicMilk"; e.eye = "softAmber"; e.hp = false; e.pl = false;
+    return e;
+}
+
+/// `KuroCat.exe --link-selftest [pairing code]`: checks crypto + JSON against macOS test vectors,
+/// runs two sessions against the real relay, and (with a code) talks to a macOS peer. Writes
+/// kurocat-selftest.txt and returns the number of failures.
+int runLinkSelfTest(const std::wstring& joinCode) {
+    std::string log;
+    int failures = 0;
+    auto check = [&](bool ok, const std::string& what) {
+        log += (ok ? "PASS " : "FAIL ") + what + "\n";
+        if (!ok) ++failures;
+    };
+    auto fromHex = [](const std::string& h) {
+        catlink::Bytes b;
+        for (size_t i = 0; i + 1 < h.size(); i += 2) b.push_back((uint8_t)strtoul(h.substr(i, 2).c_str(), nullptr, 16));
+        return b;
+    };
+    auto save = [&] {
+        FILE* f = nullptr;
+        if (fopen_s(&f, "kurocat-selftest.txt", "wb") == 0 && f) { fwrite(log.data(), 1, log.size(), f); fclose(f); }
+    };
+
+    // 1. macOS test vectors
+    const char* macSealed = "000102030405060708090a0b747a35c17c550600bf4337219e280fba1b09bde8c07c69f0d5a020105be399dc9aadc0b2ce8ca7ddd70b979e98206899b7de82fe73775ce7ed35cac2d16eb0e391e26bd284463ea0d26810780dbf60a723170dcbd93c5c047151b013a55eaed275ccee534e1473a377515f05f86c4996c4c9ae9222b3d4c5f8884cf76df88454232ade5a16480e3ac90e539617bd057d0b547e85040b794fd2f2b6afe8b407d9b6a862409e98dee7f6f578fadf163c5b1ba6d960c93d5ffda21a0047c37870f137384dd1080b7e69e9df3cd52f00181cf8d41f464feb1e9a851cab4bbdbfe37150f2d4cfe712fc04451ced8aa3393b09e4a7d06d694e0db80c7d70536cb05388520eb643be7f99ef67854a6984173412f3be93a6d49e5fe360badc040894795beba8d5d43db1c5aed772e4ef444f098c5adbb44016ea1545";
+    auto code = catlink::Code::parse(L"kc-c-2345-6789-abcd-efgh-jkmn");
+    check(code.has_value(), "parse pairing code");
+    if (code) {
+        check(code->display() == L"KC-C-2345-6789-ABCD-EFGH-JKMN", "display format");
+        check(code->topic() == "kurocat/v1/065e44db6944bbcbcd98b612413d9438", "topic matches macOS");
+        catlink::Bytes key = code->key();
+        check(catlink::toHex(key.data(), key.size()) == "6333cf40ccf75b347e348d54cbc4d1780b3f22ffeb6285170276c09c94ab565d", "AES key matches macOS");
+        auto plain = catlink::Session::openForTest(*code, fromHex(macSealed));
+        check(plain.has_value(), "decrypt a macOS message");
+        if (plain) {
+            log += "  macOS json: " + *plain + "\n";
+            auto b = catlink::decodeBatch(*plain);
+            check(b && b->f == "aaaa1111" && b->q == 7 && b->e.size() == 4, "decode the macOS batch");
+            if (b && b->e.size() == 4) {
+                const auto& h = b->e[0]; const auto& kd = b->e[1]; const auto& m = b->e[2]; const auto& pet = b->e[3];
+                check(h.k == "hello" && h.n && *h.n == "小猫/Mimi \"q\"" && h.coat == std::string("siamese") &&
+                      h.kb == std::string("retroCream") && h.eye == std::string("siameseBlue") && h.hp == true && h.pl == false,
+                      "hello fields (Chinese text, escaped / and quotes)");
+                check(kd.k == "kd" && kd.id == 3 && kd.s == std::string("l") && kd.o == 12, "key-down fields");
+                check(m.k == "m" && m.x == 0.625 && m.y == 0.25 && m.vx == -1.5 && m.vy && std::fabs(*m.vy - 0.001) < 1e-9 && m.o == 40, "mouse fields");
+                check(pet.k == "pet" && pet.x == 172.5 && pet.y == 98.0 && pet.d == 7.0 && pet.h == true && pet.o == 90, "pet fields");
+            }
+        }
+        // 2. A Windows-made message for macOS to check (fixed nonce 00..0b)
+        catlink::Batch wb;
+        wb.f = "bbbb2222"; wb.q = 9;
+        wb.e.push_back(testHello("Windows 小猫", "orangeWhite"));
+        catlink::Event kd; kd.k = "kd"; kd.o = 15; kd.id = 5; kd.s = "r"; wb.e.push_back(kd);
+        catlink::Event m; m.k = "m"; m.o = 50; m.x = 0.1; m.y = 0.9; m.vx = 0.25; m.vy = -0.5; wb.e.push_back(m);
+        catlink::Event c; c.k = "c"; c.o = 70; c.b = 1; c.d = 1.0; wb.e.push_back(c);
+        std::string json = catlink::encodeBatch(wb);
+        auto round = catlink::decodeBatch(json);
+        check(round && round->e.size() == 4 && round->e[0].n == std::string("Windows 小猫") && round->e[2].vy == -0.5, "JSON round trip");
+        uint8_t nonce[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+        log += "WINDOWS_JSON=" + json + "\n";
+        log += "WINDOWS_SEALED=" + catlink::Session::sealForTest(*code, json, nonce) + "\n";
+    }
+
+    // 3. Two sessions over the real relay (broker-cn.emqx.io)
+    {
+        catlink::Code live = catlink::Code::generate('C');
+        catlink::Session a, b;
+        a.profile = [] { return testHello("A", "siamese"); };
+        b.profile = [] { return testHello("B", "orangeWhite"); };
+        InputEngine idle;
+        idle.externalFeed = true;
+        std::map<std::string, int> gotB, gotA;
+        std::string helloOnB;
+        auto pump = [&](double seconds, std::function<bool()> until) {
+            double end = nowSeconds() + seconds;
+            while (nowSeconds() < end) {
+                double now = nowSeconds();
+                a.update(now, idle);
+                b.update(now, idle);
+                for (auto& d : b.takeDue(now)) { gotB[d.e.k]++; if (d.e.k == "hello") helloOnB = d.e.n.value_or("") + "/" + d.e.coat.value_or(""); }
+                for (auto& d : a.takeDue(now)) gotA[d.e.k]++;
+                if (until && until()) return;
+                Sleep(15);
+            }
+        };
+        double t0 = nowSeconds();
+        a.start(live);
+        b.start(live);
+        pump(25, [&] { return a.status() == catlink::Status::Linked && b.status() == catlink::Status::Linked; });
+        char buf[64];
+        snprintf(buf, sizeof buf, " (%.1f s)", nowSeconds() - t0);
+        check(a.status() == catlink::Status::Linked && b.status() == catlink::Status::Linked, std::string("two sessions linked over broker-cn.emqx.io") + buf);
+        if (a.status() != catlink::Status::Linked) log += "  last error: " + catlink::narrow(a.lastError()) + "\n";
+        const PhysicalKey keys[] = { PhysicalKey::H, PhysicalKey::E, PhysicalKey::L, PhysicalKey::L, PhysicalKey::O };
+        for (PhysicalKey k : keys) {
+            a.noteKeyDown(k, prefersViewerLeftPaw(k), false); pump(0.04, nullptr);
+            a.noteKeyUp(k); pump(0.05, nullptr);
+        }
+        a.noteKeyDown(PhysicalKey::X, false, true);   // password field focused: must not be sent
+        a.noteKeyUp(PhysicalKey::X);
+        a.noteClick(0, true); pump(0.08, nullptr); a.noteClick(0, false);
+        for (int i = 0; i < 12; ++i) { b.notePet({172.0f + (i % 4) * 5.0f, 100.0f}, 6.0f, true); pump(0.05, nullptr); }
+        pump(2.5, nullptr);
+        check(gotB["kd"] == 5 && gotB["ku"] == 5, "5 key presses arrive (password-field press not sent): kd=" + std::to_string(gotB["kd"]) + " ku=" + std::to_string(gotB["ku"]));
+        check(gotB["c"] == 2, "click down + up arrive");
+        check(gotA["pet"] == 12, "12 petting strokes arrive the other way: " + std::to_string(gotA["pet"]));
+        check(helloOnB == "A/siamese", "friend's hello arrives: " + helloOnB);
+        a.stop();
+        pump(5, [&] { return b.status() == catlink::Status::FriendOffline; });
+        check(b.status() == catlink::Status::FriendOffline, "friend leaving is noticed");
+        b.stop();
+    }
+
+    // 4. Optional: talk to a macOS peer that joined `joinCode`
+    if (!joinCode.empty()) {
+        auto code2 = catlink::Code::parse(joinCode);
+        check(code2.has_value(), "parse the macOS peer's code");
+        if (code2) {
+            catlink::Session w;
+            w.profile = [] { return testHello("Windows CI", "shorthair"); };
+            InputEngine idle;
+            idle.externalFeed = true;
+            std::map<std::string, int> got;
+            std::string macHello;
+            auto pump = [&](double seconds, std::function<bool()> until) {
+                double end = nowSeconds() + seconds;
+                while (nowSeconds() < end) {
+                    double now = nowSeconds();
+                    w.update(now, idle);
+                    for (auto& d : w.takeDue(now)) { got[d.e.k]++; if (d.e.k == "hello") macHello = d.e.n.value_or("") + "/" + d.e.coat.value_or(""); }
+                    if (until && until()) return;
+                    Sleep(15);
+                }
+            };
+            w.start(*code2);
+            pump(240, [&] { return !macHello.empty(); });
+            check(!macHello.empty(), "macOS peer's hello received: " + macHello);
+            for (int i = 0; i < 6; ++i) {
+                PhysicalKey k = i % 2 ? PhysicalKey::J : PhysicalKey::F;
+                w.noteKeyDown(k, prefersViewerLeftPaw(k), false); pump(0.06, nullptr);
+                w.noteKeyUp(k); pump(0.1, nullptr);
+            }
+            for (int i = 0; i < 40; ++i) { w.notePet({172.0f + (i % 4) * 5.0f, 98.0f}, 7.0f, true); pump(0.05, nullptr); }
+            pump(20, [&] { return got["kd"] >= 3; });
+            log += "  from macOS:";
+            for (auto& kv : got) log += " " + kv.first + "=" + std::to_string(kv.second);
+            log += "\n";
+            check(got["kd"] >= 3, "macOS key presses received");
+            w.stop();
+            pump(1, nullptr);
+        }
+    }
+
+    log += failures ? "RESULT: " + std::to_string(failures) + " failure(s)\n" : "RESULT: all passed\n";
+    save();
+    return failures;
+}
+
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Enable crisp Per-Monitor V2 DPI awareness on Windows 10/11
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    if (commandLineHasFlag(L"--link-selftest")) {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        std::wstring join;
+        for (int i = 1; argv && i + 1 < argc; ++i) if (wcscmp(argv[i], L"--link-selftest") == 0) join = argv[i + 1];
+        if (argv) LocalFree(argv);
+        return runLinkSelfTest(join);
+    }
 
     const int myVersion = versionToNumber(APP_VERSION);
     const bool forceTakeover = commandLineHasFlag(L"--takeover");   // admin relaunch
@@ -1392,6 +2134,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     g_app = &app;
     app.settings.loadFromRegistry();
     app.isElevated = isCurrentProcessElevated();
+    app.savedLinkCode = regReadString(L"LinkCode");
+    app.linkServer = regReadString(L"LinkServer") == L"G" ? 'G' : 'C';
+    app.showFriendCat = regReadDword(L"LinkShowFriend", 1) != 0;
+    app.link.profile = [&app] { return linkProfile(app); };
 
     // "Always run as administrator": hand over to an elevated copy (one UAC prompt). If the user
     // declines, simply carry on non-elevated.
@@ -1415,8 +2161,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         setAutoStartEnabled(true);
     }
 
-    app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
-    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down, app.settings); };
+    app.input.onKeyDown = [&](PhysicalKey k) {
+        app.physics.triggerKeyDown(k, app.settings);
+        app.link.noteKeyDown(k, prefersViewerLeftPaw(k), g_passwordWatcher.isPassword.load());
+    };
+    app.input.onKeyUp = [&](PhysicalKey k) { app.link.noteKeyUp(k); };
+    app.input.onMouseClick = [&](int btn, bool down) {
+        app.physics.triggerMouseClick(btn, down, app.settings);
+        app.link.noteClick(btn, down);
+    };
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -1433,6 +2186,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     trayWc.hInstance = hInst;
     trayWc.lpszClassName = TRAY_OWNER_CLASS;
     RegisterClassExW(&trayWc);
+
+    WNDCLASSEXW friendWc = {};
+    friendWc.cbSize = sizeof(friendWc);
+    friendWc.lpfnWndProc = friendWndProc;
+    friendWc.hInstance = hInst;
+    friendWc.lpszClassName = FRIEND_CLASS;
+    friendWc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    RegisterClassExW(&friendWc);
 
     app.menuOwnerHwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW,
@@ -1491,10 +2252,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Global shortcut Ctrl+Alt+Shift+P to toggle full click-through anytime!
     if (app.menuOwnerHwnd) {
         RegisterHotKey(app.menuOwnerHwnd, HOTKEY_CLICKTHROUGH_ID, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'P');
-        startAsyncUpdateCheck(app.menuOwnerHwnd, false, 2500);
+        if (UPDATE_CHECKS_ENABLED) startAsyncUpdateCheck(app.menuOwnerHwnd, false, 2500);
     }
 
     ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+
+    // Cat Link: hide keyboard activity in password fields; reconnect if it was on.
+    g_passwordWatcher.start();
+    if (regReadDword(L"LinkEnabled", 0)) {
+        if (auto code = catlink::Code::parse(app.savedLinkCode)) app.link.start(*code);
+    }
+
     app.lastTickTime = nowSeconds();
     tickAndRender(app);
     app.nextFrameTime = nowSeconds() + FRAME_INTERVAL;
@@ -1526,6 +2294,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
         if (!running) break;
         renderIfDue(app);
+        linkTick(app);
         housekeeping(app);
     }
 
