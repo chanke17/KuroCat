@@ -614,6 +614,18 @@ public:
         queue(e);
     }
 
+    /// Scrolling, merged to one event per 50 ms (touchpads send many small steps).
+    void noteScroll(float delta) {
+        if (!connected()) return;
+        double now = nowSeconds();
+        if (!pending_.empty() && pending_.back().k == "w" && pending_.back().o >= (now - batchStart_) * 1000.0 - 50.0) {
+            pending_.back().d = pending_.back().d.value_or(0.0) + delta;
+            return;
+        }
+        Event e; e.k = "w"; e.d = delta;
+        queue(e);
+    }
+
     void noteClick(int button, bool down) {
         if (!connected()) return;
         Event e; e.k = "c"; e.b = button; e.d = down ? 1.0 : 0.0;

@@ -19,6 +19,8 @@
 #include "CatRenderer.hpp"
 #include "CatLink.hpp"
 #include <UIAutomation.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -94,6 +96,9 @@ enum MenuCmd : UINT {
     CMD_LINK_SERVER_GLOBAL,
     CMD_LINK_SHOW_FRIEND,
     CMD_LINK_EXPLAIN,
+    CMD_LINK_NICKNAME,
+    CMD_LINK_DEMO,
+    CMD_TOGGLE_EARBUDS,
     CMD_QUIT
 };
 
@@ -150,6 +155,11 @@ struct AppState {
     char linkServer = 'C';
     bool showFriendCat = true;
     std::wstring savedLinkCode;
+    std::wstring nickname;
+    std::deque<catlink::Session::Due> demoQueue;   // a pretend friend (menu demo), never sent anywhere
+    double demoUntil = 0.0;
+    double lastHeart = 0.0;
+    int lastHeadphones = -1;                        // -1 = not known yet
     struct FriendCat {
         HWND hwnd = nullptr;
         bool shown = false;
@@ -877,8 +887,122 @@ void CALLBACK PasswordFocusWatcher::onFocus(HWINEVENTHOOK, DWORD, HWND, LONG, LO
     if (g_passwordWatcher.event_) SetEvent(g_passwordWatcher.event_);
 }
 
+/// Watches the default sound output on a background thread: headphones (form factor Headphones /
+/// Headset, or a headphone-like name) and whether anything is audible. Only the device type and
+/// the output level are read, never any audio.
+class AudioOutputWatcher {
+public:
+    std::atomic<int> headphones{-1};   // -1 unknown, 0 speakers, 1 headphones
+    std::atomic<bool> playing{false};
+    void start() { std::thread([this] { run(); }).detach(); }
+private:
+    void run() {
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return;
+        IMMDeviceEnumerator* enumerator = nullptr;
+        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                    reinterpret_cast<void**>(&enumerator))) || !enumerator) return;
+        static const PROPERTYKEY kFormFactor = { {0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}}, 0 };
+        static const PROPERTYKEY kFriendlyName = { {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14 };
+        double lastSound = -100.0;
+        while (true) {
+            bool isHeadphones = false;
+            float peak = 0.0f;
+            IMMDevice* device = nullptr;
+            if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)) && device) {
+                IPropertyStore* props = nullptr;
+                if (SUCCEEDED(device->OpenPropertyStore(STGM_READ, &props)) && props) {
+                    PROPVARIANT v;
+                    PropVariantInit(&v);
+                    if (SUCCEEDED(props->GetValue(kFormFactor, &v)) && v.vt == VT_UI4) {
+                        isHeadphones = v.ulVal == 3 /* Headphones */ || v.ulVal == 5 /* Headset */;
+                    }
+                    PropVariantClear(&v);
+                    PropVariantInit(&v);
+                    if (!isHeadphones && SUCCEEDED(props->GetValue(kFriendlyName, &v)) && v.vt == VT_LPWSTR && v.pwszVal) {
+                        std::wstring name = v.pwszVal;
+                        for (auto& ch : name) ch = (wchar_t)towlower(ch);
+                        for (const wchar_t* word : { L"headphone", L"headset", L"airpods", L"buds", L"\u8033\u673A" /* 耳机 */ }) {
+                            if (name.find(word) != std::wstring::npos) isHeadphones = true;
+                        }
+                    }
+                    PropVariantClear(&v);
+                    props->Release();
+                }
+                IAudioMeterInformation* meter = nullptr;
+                if (SUCCEEDED(device->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr,
+                                               reinterpret_cast<void**>(&meter))) && meter) {
+                    meter->GetPeakValue(&peak);
+                    meter->Release();
+                }
+                device->Release();
+            }
+            double now = nowSeconds();
+            if (peak > 0.0005f) lastSound = now;
+            headphones = isHeadphones ? 1 : 0;
+            playing = now - lastSound < 3.0;   // quiet moments in a song don't count as "stopped"
+            Sleep(700);
+        }
+    }
+};
+AudioOutputWatcher g_audioWatcher;
+
+/// A small modal text prompt (Win32 has no built-in one): returns true and updates `text` on OK.
+struct PromptData { const wchar_t* title; const wchar_t* prompt; std::wstring text; };
+
+INT_PTR CALLBACK promptProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* data = reinterpret_cast<PromptData*>(GetWindowLongPtrW(dlg, DWLP_USER));
+    switch (msg) {
+        case WM_INITDIALOG:
+            SetWindowLongPtrW(dlg, DWLP_USER, lParam);
+            data = reinterpret_cast<PromptData*>(lParam);
+            SetWindowTextW(dlg, data->title);
+            SetDlgItemTextW(dlg, 102, data->prompt);
+            SetDlgItemTextW(dlg, 101, data->text.c_str());
+            SendDlgItemMessageW(dlg, 101, EM_SETLIMITTEXT, 16, 0);
+            SetForegroundWindow(dlg);
+            return TRUE;
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDOK && data) {
+                wchar_t buf[64] = {};
+                GetDlgItemTextW(dlg, 101, buf, 64);
+                data->text = buf;
+                EndDialog(dlg, IDOK);
+                return TRUE;
+            }
+            if (LOWORD(wParam) == IDCANCEL) { EndDialog(dlg, IDCANCEL); return TRUE; }
+            break;
+    }
+    return FALSE;
+}
+
+bool promptText(HWND owner, const wchar_t* title, const wchar_t* prompt, std::wstring& text) {
+    std::vector<WORD> t;
+    auto dword = [&](DWORD d) { t.push_back(LOWORD(d)); t.push_back(HIWORD(d)); };
+    auto str = [&](const wchar_t* w) { while (*w) t.push_back((WORD)*w++); t.push_back(0); };
+    auto align = [&] { if (t.size() % 2) t.push_back(0); };
+    auto item = [&](DWORD style, short x, short y, short cx, short cy, WORD id, WORD cls, const wchar_t* label) {
+        align();
+        dword(style | WS_CHILD | WS_VISIBLE); dword(0);
+        t.push_back(x); t.push_back(y); t.push_back(cx); t.push_back(cy); t.push_back(id);
+        t.push_back(0xFFFF); t.push_back(cls); str(label); t.push_back(0);
+    };
+    dword(DS_MODALFRAME | DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU); dword(WS_EX_TOPMOST);
+    t.push_back(4); t.push_back(0); t.push_back(0); t.push_back(220); t.push_back(78);
+    t.push_back(0); t.push_back(0); str(L"");
+    t.push_back(9); str(L"Microsoft YaHei UI");
+    item(SS_LEFT, 8, 8, 204, 20, 102, 0x0082, L"");
+    item(WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, 8, 32, 204, 14, 101, 0x0081, L"");
+    item(BS_DEFPUSHBUTTON | WS_TABSTOP, 100, 56, 54, 16, IDOK, 0x0080, L"\u4FDD\u5B58");       // 保存
+    item(BS_PUSHBUTTON | WS_TABSTOP, 158, 56, 54, 16, IDCANCEL, 0x0080, L"\u53D6\u6D88");      // 取消
+    PromptData data{ title, prompt, text };
+    if (DialogBoxIndirectParamW(GetModuleHandleW(nullptr), reinterpret_cast<LPCDLGTEMPLATEW>(t.data()), owner,
+                                promptProc, reinterpret_cast<LPARAM>(&data)) != IDOK) return false;
+    text = data.text;
+    return true;
+}
+
 const wchar_t* LINK_WHAT_IS_SHARED =
-    L"对方会看到：你在打字（只知道是左手还是右手在敲，不知道按了哪个键）、鼠标的移动和点击（包括光标在屏幕上的大致位置）、你的猫咪皮肤。你们也能隔空摸对方的猫。\n"
+    L"对方会看到：你在打字（只知道是左手还是右手在敲，不知道按了哪个键）、鼠标的移动、点击和滚动（包括光标在屏幕上的大致位置）、是否戴着耳机、你的猫咪皮肤和昵称。你们也能隔空摸对方的猫。\n"
     L"输入密码时会自动暂停发送键盘动作。所有内容都用配对码加密，中转服务器也看不到内容。";
 
 std::wstring regReadString(const wchar_t* name) {
@@ -958,6 +1082,7 @@ void applyFriendProfile(AppState& app) {
 
 void updateFriendLabel(AppState& app) {
     auto& f = app.friendCat;
+    if (nowSeconds() < app.demoUntil) { f.label = L"演示 · 模拟的朋友"; f.labelDim = false; return; }
     std::string name = app.link.friendName();
     std::wstring who = name.empty() ? L"朋友的猫" : catlink::widen(name) + L" 的猫";
     switch (app.link.status()) {
@@ -1026,8 +1151,9 @@ catlink::Event linkProfile(const AppState& app) {
     e.coat = coatName(app.settings.coatTheme);
     e.kb = keyboardName(app.settings.keyboardTheme);
     e.eye = eyeName(app.settings.eyeTheme);
-    e.hp = false;
-    e.pl = false;
+    if (!app.nickname.empty()) e.n = catlink::narrow(app.nickname);
+    e.hp = g_audioWatcher.headphones.load() == 1;
+    e.pl = g_audioWatcher.playing.load();
     return e;
 }
 
@@ -1042,21 +1168,53 @@ void startLink(AppState& app, const catlink::Code& code) {
 void linkTick(AppState& app) {
     double now = nowSeconds();
     app.link.update(now, app.input);
-    for (auto& due : app.link.takeDue(now)) {
-        const catlink::Event& e = due.e;
+
+    // Our sound output -> AirPods on our cat (and tell the friend)
+    int hp = g_audioWatcher.headphones.load();
+    if (hp >= 0 && hp != app.lastHeadphones) {
+        app.physics.setHeadphonesConnected(hp == 1, app.lastHeadphones >= 0, app.settings);
+        app.lastHeadphones = hp;
+        app.link.profileChanged();
+    }
+    bool playing = g_audioWatcher.playing.load();
+    if (playing != app.physics.headphonesPlaying) {
+        app.physics.headphonesPlaying = playing;
+        app.link.profileChanged();
+    }
+
+    std::vector<catlink::Session::Due> due = app.link.takeDue(now);
+    while (!app.demoQueue.empty() && app.demoQueue.front().applyAt <= now) {
+        due.push_back(app.demoQueue.front());
+        app.demoQueue.pop_front();
+    }
+    for (auto& d : due) {
+        const catlink::Event& e = d.e;
         if (e.k == "pet") {   // the friend is petting OUR cat from their screen
             Pt cp = { (float)e.x.value_or(184.0), (float)e.y.value_or(100.0) };
             app.physics.registerPetStroke(cp, (float)e.d.value_or(6.0), e.h.value_or(true), app.settings);
+            if (now - app.lastHeart > 1.1) { app.lastHeart = now; app.physics.spawnFloatingNote(L"\u2665"); }   // ♥
             continue;
         }
         ensureFriendCat(app);
         auto& f = app.friendCat;
+        bool hadProfile = f.driver.hasProfile;
         int button = -1;
         bool down = false;
         PhysicalKey key = f.driver.apply(e, now, button, down);
         if (key != PhysicalKey::None) f.physics.triggerKeyDown(key, f.settings);
         if (button >= 0) f.physics.triggerMouseClick(button, down, f.settings);
-        if (e.k == "hello") { applyFriendProfile(app); updateFriendLabel(app); }
+        if (e.k == "w") f.physics.triggerScroll((float)e.d.value_or(0.0), f.settings);
+        if (e.k == "hello") {
+            applyFriendProfile(app);
+            f.physics.setHeadphonesConnected(e.hp.value_or(false), hadProfile, f.settings);
+            f.physics.headphonesPlaying = e.pl.value_or(false);
+            updateFriendLabel(app);
+        }
+    }
+    if (app.demoUntil > 0.0 && now >= app.demoUntil) {   // demo over
+        app.demoUntil = 0.0;
+        if (app.link.status() == catlink::Status::Off) showFriendWindow(app, false);
+        updateFriendLabel(app);
     }
     catlink::Status st = app.link.status();
     if (st != app.lastLinkStatus) {
@@ -1085,6 +1243,49 @@ void writeClipboardText(HWND owner, const std::wstring& s) {
         if (!SetClipboardData(CF_UNICODETEXT, g)) GlobalFree(g);
     }
     CloseClipboard();
+}
+
+/// A pretend friend for the menu demo: typing, fast mouse (hunting eyes), scrolling, a click, then
+/// headphones with music. Entirely local: nothing is sent.
+void startLinkDemo(AppState& app) {
+    double t0 = nowSeconds();
+    app.demoUntil = t0 + 24.0;
+    app.demoQueue.clear();
+    CatCoatTheme coats[] = { CatCoatTheme::ClassicBlack, CatCoatTheme::Siamese, CatCoatTheme::Shorthair, CatCoatTheme::OrangeWhite };
+    std::vector<CatCoatTheme> others;
+    for (auto c : coats) if (c != app.settings.coatTheme) others.push_back(c);
+    std::minstd_rand rng((unsigned)GetTickCount64());
+    CatCoatTheme coat = others[rng() % others.size()];
+    auto hello = [&](bool hpOn) {
+        catlink::Event e;
+        e.k = "hello"; e.coat = coatName(coat); e.kb = "classicMilk";
+        e.eye = coat == CatCoatTheme::Siamese ? "siameseBlue" : "softAmber";
+        e.hp = hpOn; e.pl = hpOn;
+        return e;
+    };
+    auto add = [&](double at, catlink::Event e) { app.demoQueue.push_back({ e, t0 + at }); };
+    add(0, hello(false));
+    double t = 0.5;
+    int id = 1;
+    while (t < 5.0) {
+        catlink::Event kd; kd.k = "kd"; kd.id = id; kd.s = (rng() % 2) ? "l" : "r"; add(t, kd);
+        catlink::Event ku; ku.k = "ku"; ku.id = id; add(t + 0.07, ku);
+        ++id;
+        t += 0.1 + (rng() % 120) / 1000.0;
+        if (rng() % 9 == 0) t += 0.6;
+    }
+    for (int i = 0; i < 25; ++i) {
+        double phase = i * 0.6;
+        catlink::Event m; m.k = "m"; m.x = 0.5 + 0.3 * std::sin(phase); m.y = 0.5; m.vx = 1.6 * std::cos(phase); m.vy = 0.0;
+        add(6.0 + i * 0.1, m);
+    }
+    catlink::Event stop; stop.k = "m"; stop.x = 0.6; stop.y = 0.5; stop.vx = 0.0; stop.vy = 0.0; add(8.6, stop);
+    for (int i = 0; i < 15; ++i) { catlink::Event w; w.k = "w"; w.d = 5.0; add(9.0 + i * 0.1, w); }
+    catlink::Event cd; cd.k = "c"; cd.b = 0; cd.d = 1.0; add(11.0, cd);
+    catlink::Event cu; cu.k = "c"; cu.b = 0; cu.d = 0.0; add(11.12, cu);
+    add(12.5, hello(true));
+    add(21.0, hello(false));
+    std::sort(app.demoQueue.begin(), app.demoQueue.end(), [](const auto& a, const auto& b) { return a.applyAt < b.applyAt; });
 }
 
 void appendLinkMenu(AppState& app, HMENU menu) {
@@ -1119,7 +1320,11 @@ void appendLinkMenu(AppState& app, HMENU menu) {
     AppendMenuW(server, MF_STRING | (app.linkServer == 'C' ? MF_CHECKED : 0), CMD_LINK_SERVER_CN, L"EMQX 中国（上海）");
     AppendMenuW(server, MF_STRING | (app.linkServer == 'G' ? MF_CHECKED : 0), CMD_LINK_SERVER_GLOBAL, L"EMQX 国际（美国）");
     AppendMenuW(sub, MF_POPUP, (UINT_PTR)server, L"新配对码使用的服务器");
+    std::wstring nickItem = L"我的昵称：" + (app.nickname.empty() ? std::wstring(L"未设置") : app.nickname) + L"…";
+    AppendMenuW(sub, MF_STRING, CMD_LINK_NICKNAME, nickItem.c_str());
     AppendMenuW(sub, MF_STRING | (app.showFriendCat ? MF_CHECKED : 0), CMD_LINK_SHOW_FRIEND, L"显示朋友的猫");
+    AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(sub, MF_STRING, CMD_LINK_DEMO, L"\U0001F3AC 演示：模拟一位朋友");
     AppendMenuW(sub, MF_STRING, CMD_LINK_EXPLAIN, L"对方能看到什么？");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, st == Status::Linked ? L"\U0001F517 猫咪连线（已连线）" : L"\U0001F517 猫咪连线");
 }
@@ -1172,6 +1377,21 @@ void handleLinkCommand(AppState& app, UINT cmd) {
             regWrite(L"LinkShowFriend", nullptr, app.showFriendCat ? 1 : 0);
             showFriendWindow(app, app.showFriendCat && app.link.status() != catlink::Status::Off);
             break;
+        case CMD_LINK_NICKNAME: {
+            std::wstring name = app.nickname;
+            if (promptText(owner, L"你的昵称", L"会显示在朋友屏幕上你的猫的上方。", name)) {
+                while (!name.empty() && iswspace(name.back())) name.pop_back();
+                while (!name.empty() && iswspace(name.front())) name.erase(name.begin());
+                if (name.size() > 16) name.resize(16);
+                app.nickname = name;
+                regWrite(L"LinkNickname", &app.nickname, 0);
+                app.link.profileChanged();
+            }
+            break;
+        }
+        case CMD_LINK_DEMO:
+            startLinkDemo(app);
+            break;
         case CMD_LINK_EXPLAIN: {
             std::wstring msg = std::wstring(LINK_WHAT_IS_SHARED) + L"\n\n断开连线后就不再发送任何内容。";
             MessageBoxW(nullptr, msg.c_str(), L"猫咪连线会分享什么？", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
@@ -1217,6 +1437,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING | (app.settings.showKeyLegends ? MF_CHECKED : 0), CMD_TOGGLE_KEY_LEGENDS, L"\u663E\u793A\u952E\u76D8\u5B57\u7B26");
     AppendMenuW(menu, MF_STRING | (app.settings.footEasterEgg ? MF_CHECKED : 0), CMD_TOGGLE_FOOT, L"3\u952E\u540C\u65F6\u6309\u300C\u7528\u811A\u6309\u300D\u5F69\u86CB");
     AppendMenuW(menu, MF_STRING | (app.settings.petInteraction ? MF_CHECKED : 0), CMD_TOGGLE_PET, L"\u6478\u5934/\u6478\u80CC\u95ED\u773C\u4E92\u52A8");
+    AppendMenuW(menu, MF_STRING | (app.settings.earbudAnimation ? MF_CHECKED : 0), CMD_TOGGLE_EARBUDS, L"连接耳机时戴上 AirPods \U0001F3A7");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     // Cat Coat Skin submenu
@@ -1382,8 +1603,12 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_LINK_CREATE: case CMD_LINK_JOIN: case CMD_LINK_RECONNECT: case CMD_LINK_COPY:
         case CMD_LINK_DISCONNECT: case CMD_LINK_SERVER_CN: case CMD_LINK_SERVER_GLOBAL:
-        case CMD_LINK_SHOW_FRIEND: case CMD_LINK_EXPLAIN:
+        case CMD_LINK_SHOW_FRIEND: case CMD_LINK_EXPLAIN: case CMD_LINK_NICKNAME: case CMD_LINK_DEMO:
             handleLinkCommand(app, cmd);
+            break;
+        case CMD_TOGGLE_EARBUDS:
+            app.settings.earbudAnimation = !app.settings.earbudAnimation;
+            app.settings.saveToRegistry();
             break;
         case CMD_QUIT:
             quitApp(app);
@@ -1459,9 +1684,9 @@ void renderFriendCat(AppState& app, float dt) {
             if (zone == CatHitZone::Head || zone == CatHitZone::Body) {
                 if (f.hasLastHover) {
                     float d = std::hypot(cp.x - f.lastHover.x, cp.y - f.lastHover.y);
-                    if (d > 1.2f && d < 80.0f) {
+                    if (d > 0.5f && d < 80.0f) {
                         f.physics.registerPetStroke(cp, d, zone == CatHitZone::Head, f.settings);
-                        app.link.notePet(cp, d, zone == CatHitZone::Head);
+                        if (now >= app.demoUntil) app.link.notePet(cp, d, zone == CatHitZone::Head);
                     }
                 }
                 f.lastHover = cp;
@@ -1549,7 +1774,7 @@ void tickAndRender(AppState& app) {
             if (zone == CatHitZone::Head || zone == CatHitZone::Body) {
                 if (app.hasLastHover) {
                     float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
-                    if (d > 1.2f && d < 80.0f) {
+                    if (d > 0.5f && d < 80.0f) {
                         app.physics.registerPetStroke(cp, d, zone == CatHitZone::Head, app.settings);
                     }
                 }
@@ -1608,6 +1833,19 @@ void renderIfDue(AppState& app) {
     app.nextFrameTime = (now - app.nextFrameTime < FRAME_INTERVAL) ? app.nextFrameTime + FRAME_INTERVAL
                                                                     : now + FRAME_INTERVAL;
     tickAndRender(app);
+}
+
+/// Wheel scrolling (mouse wheels and touchpads) anywhere on screen -> the paw on the mini mouse.
+HHOOK g_mouseHook = nullptr;
+LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code == HC_ACTION && wParam == WM_MOUSEWHEEL && g_app) {
+        const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
+        float delta = (float)(short)HIWORD(info->mouseData) / 12.0f;   // one notch (120) ~ 10 points, like macOS
+        g_app->input.lastMouseMoveTime = nowSeconds();
+        g_app->physics.triggerScroll(delta, g_app->settings);
+        g_app->link.noteScroll(delta);
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
 /// The friend's cat window: drag it around (its own saved position) and right-click for the menu.
@@ -1877,6 +2115,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     app->destroyBuffer();
                     app->link.stop();
                     g_passwordWatcher.stop();
+                    if (g_mouseHook) { UnhookWindowsHookEx(g_mouseHook); g_mouseHook = nullptr; }
                     if (app->friendCat.hwnd) { DestroyWindow(app->friendCat.hwnd); app->friendCat.hwnd = nullptr; }
                     app->friendCat.destroyBuffer();
                 }
@@ -1916,6 +2155,120 @@ bool shutDownRunningInstance(HWND owner, DWORD timeoutMs) {
         }
     }
     return gone;
+}
+
+// MARK: - Preview sheet (CI renders it so the drawing can be checked without a Windows screen)
+
+bool pngEncoder(CLSID& clsid) {
+    UINT num = 0, size = 0;
+    Gdiplus::GetImageEncodersSize(&num, &size);
+    if (!size) return false;
+    std::vector<BYTE> buf(size);
+    auto* info = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.data());
+    Gdiplus::GetImageEncoders(num, size, info);
+    for (UINT i = 0; i < num; ++i) if (wcscmp(info[i].MimeType, L"image/png") == 0) { clsid = info[i].Clsid; return true; }
+    return false;
+}
+
+/// `KuroCat.exe --render-preview out.png`: drives the real physics + renderer through the fork's
+/// features (resting paws, scroll paw, AirPods on/off, petting with AirPods, a friend's cat label).
+int renderPreviewSheet(const std::wstring& outPath) {
+    Gdiplus::GdiplusStartupInput in;
+    ULONG_PTR token = 0;
+    Gdiplus::GdiplusStartup(&token, &in, nullptr);
+    struct Frame { std::wstring label; std::unique_ptr<Gdiplus::Bitmap> bmp; };
+    std::vector<Frame> frames;
+    const float zoom = 1.5f;
+    const int fw = (int)(CatPhysics::CanvasWidth * zoom), fh = (int)(CatPhysics::CanvasHeight * zoom);
+    RECT rect = { 600, 300, 600 + fw, 300 + fh };
+
+    auto snap = [&](const CatPhysics& p, const CatSettings& st, const std::wstring& label, const std::wstring& tag = L"") {
+        auto bmp = std::make_unique<Gdiplus::Bitmap>(fw, fh, PixelFormat32bppARGB);
+        Gdiplus::Graphics g(bmp.get());
+        g.Clear(Gdiplus::Color(255, 219, 222, 217));
+        g.ScaleTransform(zoom, zoom);
+        CatRenderer::draw(g, p, st);
+        if (!tag.empty()) drawFriendLabel(g, tag, false);
+        frames.push_back({ label, std::move(bmp) });
+    };
+    auto run = [&](CatPhysics& p, InputEngine& eng, const CatSettings& st, double seconds, std::function<void()> each) {
+        double end = nowSeconds() + seconds;
+        while (nowSeconds() < end) {
+            if (each) each();
+            p.step(1.0f / 60.0f, rect, eng, st);
+            Sleep(16);
+        }
+    };
+    auto feed = [] { InputEngine e; e.externalFeed = true; e.lastCursorPos = { 600 + 276, 300 + 190 }; return e; };
+
+    CatSettings st;
+    st.showKeyBadges = st.showMouseBadges = true;
+    {   // resting paws on every coat
+        for (CatCoatTheme coat : { CatCoatTheme::ClassicBlack, CatCoatTheme::Siamese, CatCoatTheme::Shorthair, CatCoatTheme::OrangeWhite }) {
+            CatSettings cs = st; cs.coatTheme = coat;
+            cs.eyeTheme = coat == CatCoatTheme::Siamese ? EyeColorTheme::SiameseBlue : coat == CatCoatTheme::ClassicBlack ? EyeColorTheme::NeonChartreuse : EyeColorTheme::SoftAmber;
+            CatPhysics p; InputEngine eng = feed();
+            eng.lastMouseMoveTime = nowSeconds() - 10;
+            run(p, eng, cs, 0.6, nullptr);
+            snap(p, cs, L"resting paws");
+        }
+    }
+    {   // scroll paw
+        CatPhysics p; InputEngine eng = feed();
+        run(p, eng, st, 0.8, [&] { eng.lastMouseMoveTime = nowSeconds(); p.triggerScroll(4.0f, st); });
+        snap(p, st, L"scrolling");
+    }
+    {   // AirPods on, petting with AirPods, off
+        CatPhysics p; InputEngine eng = feed();
+        eng.lastMouseMoveTime = nowSeconds() - 10;
+        run(p, eng, st, 0.5, nullptr);
+        p.setHeadphonesConnected(true, true, st);
+        double start = nowSeconds();
+        for (double u : { 0.2, 0.45, 0.7 }) {
+            run(p, eng, st, start + u * CatPhysics::EarbudPutOnDuration - nowSeconds(), nullptr);
+            snap(p, st, L"AirPods on " + std::to_wstring((int)(u * 100)) + L"%");
+        }
+        run(p, eng, st, 1.0, nullptr);
+        snap(p, st, L"wearing");
+        int i = 0;
+        run(p, eng, st, 1.8, [&] { ++i; p.registerPetStroke({ 172.0f + (i % 4) * 5.0f, 100.0f }, 6.0f, true, st); });
+        p.spawnFloatingNote(L"\u2665");
+        run(p, eng, st, 0.3, nullptr);
+        snap(p, st, L"petted (ears fold, \u2665)");
+        p.setHeadphonesConnected(false, true, st);
+        start = nowSeconds();
+        run(p, eng, st, start + 0.42 * CatPhysics::EarbudTakeOffDuration - nowSeconds(), nullptr);
+        snap(p, st, L"AirPods off 42%");
+    }
+    {   // a friend's cat with a name tag, wearing AirPods, music note
+        CatSettings fs = st; fs.coatTheme = CatCoatTheme::OrangeWhite; fs.eyeTheme = EyeColorTheme::SoftAmber; fs.showKeyBadges = false;
+        CatPhysics p; InputEngine eng = feed();
+        eng.lastMouseMoveTime = nowSeconds() - 10;
+        p.setHeadphonesConnected(true, false, fs);
+        p.headphonesPlaying = true;
+        run(p, eng, fs, 3.0, nullptr);
+        snap(p, fs, L"friend's cat", L"小明 的猫 · 在线");
+    }
+
+    const int cols = 4, labelH = 28;
+    const int rows = (int)(frames.size() + cols - 1) / cols;
+    Gdiplus::Bitmap sheet(cols * fw, rows * (fh + labelH), PixelFormat32bppARGB);
+    Gdiplus::Graphics g(&sheet);
+    g.Clear(Gdiplus::Color(255, 255, 255, 255));
+    g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+    Gdiplus::FontFamily ff(L"Segoe UI");
+    Gdiplus::Font font(&ff, 16.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush black(Gdiplus::Color(255, 0, 0, 0));
+    for (size_t i = 0; i < frames.size(); ++i) {
+        int x = (int)(i % cols) * fw, y = (int)(i / cols) * (fh + labelH);
+        g.DrawString(frames[i].label.c_str(), -1, &font, Gdiplus::PointF((float)x + 6, (float)y + 4), &black);
+        g.DrawImage(frames[i].bmp.get(), x, y + labelH, fw, fh);
+    }
+    CLSID png;
+    bool ok = pngEncoder(png) && sheet.Save(outPath.c_str(), &png, nullptr) == Gdiplus::Ok;
+    frames.clear();
+    Gdiplus::GdiplusShutdown(token);
+    return ok ? 0 : 1;
 }
 
 // MARK: - Cat Link self-test (run by .github/workflows/catlink-selftest.yml on a real Windows machine)
@@ -2095,6 +2448,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (argv) LocalFree(argv);
         return runLinkSelfTest(join);
     }
+    if (commandLineHasFlag(L"--render-preview")) {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        std::wstring out = L"preview.png";
+        for (int i = 1; argv && i + 1 < argc; ++i) if (wcscmp(argv[i], L"--render-preview") == 0) out = argv[i + 1];
+        if (argv) LocalFree(argv);
+        return renderPreviewSheet(out);
+    }
 
     const int myVersion = versionToNumber(APP_VERSION);
     const bool forceTakeover = commandLineHasFlag(L"--takeover");   // admin relaunch
@@ -2137,6 +2498,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     app.savedLinkCode = regReadString(L"LinkCode");
     app.linkServer = regReadString(L"LinkServer") == L"G" ? 'G' : 'C';
     app.showFriendCat = regReadDword(L"LinkShowFriend", 1) != 0;
+    app.nickname = regReadString(L"LinkNickname");
     app.link.profile = [&app] { return linkProfile(app); };
 
     // "Always run as administrator": hand over to an elevated copy (one UAC prompt). If the user
@@ -2259,6 +2621,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     // Cat Link: hide keyboard activity in password fields; reconnect if it was on.
     g_passwordWatcher.start();
+    g_audioWatcher.start();
+    g_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, mouseHookProc, hInst, 0);
     if (regReadDword(L"LinkEnabled", 0)) {
         if (auto code = catlink::Code::parse(app.savedLinkCode)) app.link.start(*code);
     }

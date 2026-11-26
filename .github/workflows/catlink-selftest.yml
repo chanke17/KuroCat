@@ -44,6 +44,14 @@ jobs:
           type kurocat-selftest.txt
           exit /b %RC%
 
+      - name: Render preview sheet
+        if: always()
+        shell: cmd
+        run: |
+          cd windows
+          start "" /wait KuroCat.exe --render-preview preview.png
+          dir preview.png
+
       - name: Upload KuroCat.exe and the self-test log
         if: always()
         uses: actions/upload-artifact@v4
@@ -52,3 +60,4 @@ jobs:
           path: |
             windows/KuroCat.exe
             windows/kurocat-selftest.txt
+            windows/preview.png
