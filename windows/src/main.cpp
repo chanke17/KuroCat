@@ -14,6 +14,12 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <winhttp.h>
+// ============================================================================
+// KuroCat 圣诞树版（Christmas Tree edition）
+// 原项目：KuroCat — Copyright (c) 2026 chanke17, MIT License（见 LICENSE）
+// 新增/修改部分：Copyright (c) 2026 Allen Mai, MIT License（沿用原仓库协议）
+// 说明：猫咪角色代码全部保留（未被删除），默认渲染「圣诞树」角色。
+// ============================================================================
 // MSVC's GDI+ headers call unqualified min()/max() inside inline helpers; NOMINMAX
 // removes the macros, so the std overloads must be visible before <gdiplus.h>.
 #include <algorithm>
@@ -126,6 +132,11 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_RUN_AS_ADMIN,
     CMD_QUIT,
     CMD_COAT_TABBY,
+    // 圣诞树配色预设（用户新增）
+    CMD_TREE_CLASSIC,
+    CMD_TREE_SNOW,
+    CMD_TREE_ROSE,
+    CMD_TREE_NEON,
     CMD_EYE_OLIVE_GOLD,
     CMD_TABLET_AUTO,
     CMD_TABLET_ON,
@@ -200,6 +211,8 @@ struct RenderedPoseSnapshot {
     int breath100 = 0, blink100 = 0, sleep100 = 0;
     int tail10 = 0, purr100 = 0, happy100 = 0;
     int sparkleCount = 0, zzzCount = 0, noteCount = 0;
+    // 圣诞树角色：彩灯闪烁相位 + 礼物粒子数量（不加入快照会导致动画被“跳过重绘”冻住）
+    int treePhase20 = 0, giftCount = 0;
     int music100 = 0, musicPhase20 = 0, marquee20 = 0;
 
     bool operator==(const RenderedPoseSnapshot& o) const {
@@ -219,6 +232,7 @@ struct RenderedPoseSnapshot {
                breath100 == o.breath100 && blink100 == o.blink100 && sleep100 == o.sleep100 &&
                tail10 == o.tail10 && purr100 == o.purr100 && happy100 == o.happy100 &&
                sparkleCount == o.sparkleCount && zzzCount == o.zzzCount && noteCount == o.noteCount &&
+               treePhase20 == o.treePhase20 && giftCount == o.giftCount &&
                music100 == o.music100 && musicPhase20 == o.musicPhase20 && marquee20 == o.marquee20;
     }
 };
@@ -1403,6 +1417,8 @@ void applyOBSMode(AppState& app) {
 const SkinSpec& activeSkin(const AppState& app) {
     if (!app.settings.customSkin.empty())
         if (const SkinSpec* s = app.skins.find(app.settings.customSkin)) return *s;
+    // 圣诞树角色：用户显式选择树皮肤时才启用，否则保持上游的猫咪内置皮肤
+    if (app.settings.useTree) return builtInTreeSkin(app.settings.treeTheme);
     return builtInSkin(app.settings.coatTheme);
 }
 
@@ -2271,24 +2287,31 @@ void rebuildCombosAndSync(AppState& app) {
     bool en = app.settings.isEnglish;
     auto tr = [&](const wchar_t* zh, const wchar_t* eng) -> const wchar_t* { return en ? eng : zh; };
 
-    // Coat / Skin combo (6 built-in + imported)
+    // Coat / Skin combo（6 个猫咪内置 + 4 个圣诞树配色 + 已导入皮肤）
     HWND coatCb = GetDlgItem(hwnd, ID_COAT_COMBO);
     if (coatCb) {
         SendMessageW(coatCb, CB_RESETCONTENT, 0, 0);
         const wchar_t* builtins[6] = {
             tr(L"\u7ECF\u5178\u5C0F\u9ED1\u732B", L"Classic Black Cat"),
-            tr(L"\u6316\u7164\u66B9\u7F57\u732B", L"Siamese Cat"),
+            tr(L"\u6316\u7164\u66F9\u7F57\u732B", L"Siamese Cat"),
             tr(L"\u7F8E\u77ED\u94F6\u864E\u6591", L"Silver Tabby Shorthair"),
             tr(L"\u6A58\u767D\u732B", L"Orange & White Cat"),
             tr(L"\u5446\u732B", L"Dazed Cat"),
             tr(L"\u72F8\u82B1\u732B", L"Tabby Cat")
         };
         for (int i = 0; i < 6; ++i) SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)builtins[i]);
-        int sel = (int)app.settings.coatTheme;
+        const wchar_t* trees[4] = {
+            tr(L"\u7ECF\u5178\u5723\u8BDE\u7EFF", L"Classic Christmas Green"),
+            tr(L"\u96EA\u591C\u84DD", L"Snowy Night Blue"),
+            tr(L"\u7C89\u91D1\u94C3\u94DB", L"Rose Gold Bells"),
+            tr(L"\u6697\u591C\u9713\u8679", L"Midnight Neon")
+        };
+        for (int i = 0; i < 4; ++i) SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)trees[i]);
+        int sel = app.settings.useTree ? 6 + (int)app.settings.treeTheme : (int)app.settings.coatTheme;
         for (size_t i = 0; i < app.skins.skins.size(); ++i) {
             SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)utf8ToWide(app.skins.displayName(app.skins.skins[i])).c_str());
             if (!app.settings.customSkin.empty() && app.skins.skins[i].id == app.settings.customSkin) {
-                sel = 6 + (int)i;
+                sel = 10 + (int)i;
             }
         }
         SendMessageW(coatCb, CB_SETCURSEL, (WPARAM)sel, 0);
@@ -2782,18 +2805,17 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                     app->settings.overrideSkinIris = false;
                     if (sel < 6) {
                         app->settings.customSkin.clear();
+                        app->settings.useTree = false;
                         app->settings.coatTheme = (CatCoatTheme)sel;
-                        switch (app->settings.coatTheme) {
-                            case CatCoatTheme::ClassicBlack: app->settings.eyeTheme = EyeColorTheme::NeonChartreuse; break;
-                            case CatCoatTheme::Siamese:      app->settings.eyeTheme = EyeColorTheme::SiameseBlue; break;
-                            case CatCoatTheme::Shorthair:    app->settings.eyeTheme = EyeColorTheme::ReferenceHazel; break;
-                            case CatCoatTheme::OrangeWhite:  app->settings.eyeTheme = EyeColorTheme::WarmAmber; break;
-                            case CatCoatTheme::Dazed:        app->settings.eyeTheme = EyeColorTheme::SoftAmber; break;
-                            case CatCoatTheme::Tabby:        app->settings.eyeTheme = EyeColorTheme::OliveGold; break;
-                        }
-                    } else if ((size_t)(sel - 6) < app->skins.skins.size()) {
-                        app->settings.customSkin = app->skins.skins[sel - 6].id;
+                    } else if (sel < 10) {
+                        app->settings.customSkin.clear();
+                        app->settings.useTree = true;
+                        app->settings.treeTheme = (TreeTheme)(sel - 6);
+                    } else if ((size_t)(sel - 10) < app->skins.skins.size()) {
+                        app->settings.customSkin = app->skins.skins[sel - 10].id;
                     }
+                    app->physics.setTreeMode(activeSkin(*app).renderStyle == SkinRenderStyle::Tree);
+                    app->forceRedraw = true;
                     app->settings.saveToRegistry();
                     refreshDressingRoom(*app);
                     refreshSettingsWindow(*app);
@@ -3658,16 +3680,22 @@ void showContextMenu(AppState& app, POINT screenPt) {
         SetMenuDefaultItem(menu, CMD_TOGGLE_VISIBLE, FALSE);
     }
 
-    // Quick Cat Skin switcher
+    // Quick Cat Skin switcher（含圣诞树配色）
     HMENU coatMenu = CreatePopupMenu();
     bool customActive = app.skins.find(app.settings.customSkin) != nullptr;
-    auto coatCheck = [&](CatCoatTheme c) -> UINT { return !customActive && app.settings.coatTheme == c ? MF_CHECKED : 0; };
+    auto coatCheck = [&](CatCoatTheme c) -> UINT { return !customActive && !app.settings.useTree && app.settings.coatTheme == c ? MF_CHECKED : 0; };
     AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::ClassicBlack), CMD_COAT_BLACK, tr(L"\u7ECF\u5178\u5C0F\u9ED1\u732B (\u539F\u7248)", L"Classic Black Cat"));
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Siamese), CMD_COAT_SIAMESE, tr(L"\u6316\u7164\u66B9\u7F57\u732B", L"Siamese Cat"));
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Siamese), CMD_COAT_SIAMESE, tr(L"\u6316\u7164\u66F9\u7F57\u732B", L"Siamese Cat"));
     AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Shorthair), CMD_COAT_SHORTHAIR, tr(L"\u7F8E\u77ED\uFF08\u94F6\u864E\u6591\u52A0\u767D\uFF09", L"Silver Tabby Shorthair"));
     AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::OrangeWhite), CMD_COAT_ORANGE_WHITE, tr(L"\u6A58\u767D\u732B", L"Orange & White Cat"));
     AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Dazed), CMD_COAT_DAZED, tr(L"\u5446\u732B", L"Dazed Cat"));
     AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Tabby), CMD_COAT_TABBY, tr(L"\u72F8\u82B1\u732B", L"Tabby Cat"));
+    AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
+    auto treeCheck = [&](TreeTheme t) -> UINT { return !customActive && app.settings.useTree && app.settings.treeTheme == t ? MF_CHECKED : 0; };
+    AppendMenuW(coatMenu, MF_STRING | treeCheck(TreeTheme::ClassicGreen), CMD_TREE_CLASSIC, tr(L"\u5723\u8BDE\u6811\uFF1A\u7ECF\u5178\u5723\u8BDE\u7EFF", L"Tree: Classic Christmas Green"));
+    AppendMenuW(coatMenu, MF_STRING | treeCheck(TreeTheme::SnowBlue), CMD_TREE_SNOW, tr(L"\u5723\u8BDE\u6811\uFF1A\u96EA\u591C\u84DD", L"Tree: Snowy Night Blue"));
+    AppendMenuW(coatMenu, MF_STRING | treeCheck(TreeTheme::RoseGold), CMD_TREE_ROSE, tr(L"\u5723\u8BDE\u6811\uFF1A\u7C89\u91D1\u94C3\u94DB", L"Tree: Rose Gold Bells"));
+    AppendMenuW(coatMenu, MF_STRING | treeCheck(TreeTheme::MidnightNeon), CMD_TREE_NEON, tr(L"\u5723\u8BDE\u6811\uFF1A\u6697\u591C\u9713\u8679", L"Tree: Midnight Neon"));
     size_t listed = std::min<size_t>(app.skins.skins.size(), CMD_SKIN_RANGE);
     if (listed) AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     for (size_t i = 0; i < listed; ++i) {
@@ -3691,7 +3719,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(coatMenu, MF_STRING, CMD_IMPORT_SKIN, tr(L"\u5BFC\u5165\u76AE\u80A4 / \u6362\u88C5\u95F4\u2026", L"Import Skin / Wardrobe..."));
     AppendMenuW(coatMenu, MF_STRING, CMD_OPEN_WORKSHOP, tr(L"\u6253\u5F00\u76AE\u80A4\u5DE5\u574A\u2026", L"Open Skin Workshop..."));
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, tr(L"\u732B\u54AA\u76AE\u80A4 \U0001F431", L"Cat Skin \U0001F431"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, tr(L"\u732B\u54AA / \u5723\u8BDE\u6811\u76AE\u80A4 \U0001F431", L"Cat / Tree Skin \U0001F431"));
 
     // Skin Workshop (Create custom skins) right on the top-level menu
     AppendMenuW(menu, MF_STRING, CMD_OPEN_WORKSHOP,
@@ -3709,17 +3737,9 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_OPEN_SETTINGS, tr(L"\u2699\uFE0F \u8BBE\u7F6E\u2026", L"\u2699\uFE0F Settings..."));
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    if (!app.availableUpdateVersion.empty()) {
-        std::wstring upTxt = app.isUpdating
-            ? (std::wstring(tr(L"\u23F3 \u6B63\u5728\u4E0B\u8F7D\u66F4\u65B0 ", L"\u23F3 Downloading update ")) + app.availableUpdateVersion + L"...")
-            : (std::wstring(tr(L"\U0001F195 \u53D1\u73B0\u65B0\u7248\u672C ", L"\U0001F195 Update Available ")) + app.availableUpdateVersion);
-        AppendMenuW(menu, MF_STRING | (app.isUpdating ? MF_GRAYED : 0), CMD_OPEN_UPDATE, upTxt.c_str());
-    } else if (app.isManualUpdateCheck) {
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, CMD_CHECK_UPDATE,
-            tr(L"\u23F3 \u6B63\u5728\u68C0\u67E5\u66F4\u65B0...", L"\u23F3 Checking for Updates..."));
-    } else {
-        std::wstring chkTxt = std::wstring(tr(L"\u68C0\u67E5\u66F4\u65B0 (\u5F53\u524D v", L"Check for Updates (v")) + APP_VERSION + L")";
-        AppendMenuW(menu, MF_STRING, CMD_CHECK_UPDATE, chkTxt.c_str());
+    {
+        std::wstring verTxt = std::wstring(L"v") + APP_VERSION;
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, CMD_CHECK_UPDATE, verTxt.c_str());
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_QUIT, tr(L"\u9000\u51FA KuroCat", L"Quit KuroCat"));
@@ -3880,6 +3900,22 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_OPEN_KB_DIR:
             KeyboardSkinLibrary::ensureDir();
             ShellExecuteW(nullptr, L"open", KeyboardSkinLibrary::directory().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        case CMD_TREE_CLASSIC:
+        case CMD_TREE_SNOW:
+        case CMD_TREE_ROSE:
+        case CMD_TREE_NEON:
+            app.settings.overrideSkinIris = false;
+            app.settings.customSkin.clear();
+            app.settings.useTree = true;
+            app.settings.treeTheme = cmd == CMD_TREE_CLASSIC ? TreeTheme::ClassicGreen
+                                   : cmd == CMD_TREE_SNOW    ? TreeTheme::SnowBlue
+                                   : cmd == CMD_TREE_ROSE    ? TreeTheme::RoseGold
+                                                             : TreeTheme::MidnightNeon;
+            app.physics.setTreeMode(true);
+            app.forceRedraw = true;
+            app.settings.saveToRegistry();
+            refreshSettingsWindow(app);
             break;
         case CMD_COAT_BLACK:
             app.settings.overrideSkinIris = false;
@@ -4191,6 +4227,8 @@ void tickAndRender(AppState& app) {
     curPose.purr100 = (int)std::lround(app.physics.petHeadIntensity * 100.0f);
     curPose.happy100 = (int)std::lround(app.physics.petBodyIntensity * 100.0f);
     curPose.sparkleCount = (int)app.physics.sparkles.size();
+    curPose.giftCount = (int)app.physics.gifts.size();
+    curPose.treePhase20 = (int)std::lround(std::fmod(app.physics.time, 1.0f) * 20.0f);
     curPose.music100 = (int)std::lround(app.physics.musicIntensity * 100.0f);
     curPose.musicPhase20 = (app.physics.musicIntensity > 0.01f) ? (int)std::lround(app.physics.musicPhase * 20.0f) : 0;
     curPose.marquee20 = app.settings.keyboardMarquee ? (int)std::lround(app.physics.marqueePhase * 20.0f) : 0;
@@ -4533,6 +4571,25 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_LBUTTONUP:
+            // 圣诞树版：单击树（几乎没有移动）→ 从点击处弹出一圈星星
+            if (app && hwnd == app->hwnd && app->isDragging && app->dragMouseButton == 1) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                float dx = (float)(cur.x - app->dragStartCursor.x);
+                float dy = (float)(cur.y - app->dragStartCursor.y);
+                if (std::hypot(dx, dy) < 4.0f) {
+                    RECT wr = {};
+                    GetWindowRect(hwnd, &wr);
+                    int w = std::max(1, (int)(wr.right - wr.left));
+                    int h = std::max(1, (int)(wr.bottom - wr.top));
+                    Pt rawCp = {
+                        (float)(cur.x - wr.left) / (float)w * CatPhysics::CanvasWidth,
+                        (float)(cur.y - wr.top) / (float)h * CatPhysics::CanvasHeight
+                    };
+                    Pt cp = CatRenderer::canvasPointToCatSpace(rawCp, app->settings.flipHorizontal, app->settings.rotationDeg);
+                    if (app->physics.treeMode() && TreeRenderer::hitTest(cp)) app->physics.treeOnTap(cp);
+                }
+            }
             if (app && app->isRotating) {
                 app->isRotating = false;
                 ReleaseCapture();
@@ -4973,6 +5030,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     app.skins.reload();
     app.kbLibrary.reload();
     app.isElevated = isCurrentProcessElevated();
+    // 圣诞树角色：仅在当前皮肤为树（内置树配色或导入的 renderStyle="tree" 皮肤）时启用树物理
+    app.physics.setTreeMode(activeSkin(app).renderStyle == SkinRenderStyle::Tree);
 
     // "Always run as administrator": hand over to an elevated copy (one UAC prompt). If the user
     // declines, simply carry on non-elevated.
@@ -5008,7 +5067,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         } else if (app.input.totalKeystrokesToday % 10 == 0) {
             CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
         }
-        app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle == SkinTypingStyle::Douni, &app.input.activeKeys);
+        // 圣诞树角色：打字 → 树回弹 + 弹星 + 随机礼物 + 连打触发喷泉
+        if (app.physics.treeMode()) {
+            app.physics.treeOnKey(app.settings);
+        } else {
+            app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle == SkinTypingStyle::Douni, &app.input.activeKeys);
+        }
     };
     app.input.onMouseClick = [&](int btn, bool down) {
         app.physics.triggerMouseClick(btn, down, app.settings, activeSkin(app).renderStyle == SkinRenderStyle::Douni || activeSkin(app).renderStyle == SkinRenderStyle::Beagle);

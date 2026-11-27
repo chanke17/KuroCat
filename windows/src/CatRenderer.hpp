@@ -1,5 +1,8 @@
 #pragma once
 #define NOMINMAX
+// KuroCat 圣诞树版（Christmas Tree edition）
+// 原项目：KuroCat — Copyright (c) 2026 chanke17, MIT License
+// 新增/修改部分：Copyright (c) 2026 Allen Mai, MIT License（沿用原仓库协议）
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -18,6 +21,7 @@
 #include "../../shared/Rig.hpp"
 #include "../../shared/KeyboardSkinSpec.hpp"
 #include "../../shared/BeagleAtlas.hpp"
+#include "TreeRenderer.hpp"   // 圣诞树角色（用户新增）
 
 enum class CatHitZone {
     None,
@@ -230,6 +234,10 @@ public:
     }
 
     static CatHitZone hitTest(Pt p, const CatPhysics& physics, const SkinSpec& skin) {
+        if (skin.renderStyle == SkinRenderStyle::Tree) {
+            // 圣诞树只按树形（树冠三角 + 树干 + 树顶星）判定，点空白处仍然穿透桌面
+            return TreeRenderer::hitTest(p) ? CatHitZone::Body : CatHitZone::None;
+        }
         if (skin.renderStyle == SkinRenderStyle::Douni || skin.renderStyle == SkinRenderStyle::Beagle) {
             float loaf = std::clamp(physics.douniLoafBlend.value, 0.0f, 1.0f);
             float loafS = loaf * loaf * (3.0f - 2.0f * loaf);
@@ -357,9 +365,19 @@ public:
         float dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0f - 2.0f * dizzyFallRaw);
         float preWobble = std::clamp((dizzy - 0.12f) / 0.38f, 0.0f, 1.0f) * (1.0f - dizzyFall);
 
+        if (skin.renderStyle == SkinRenderStyle::Tree) {
+            // 圣诞树角色：树体 + 彩灯 + 树顶星 + 星星/礼物粒子。
+            // 下方所有猫咪绘制代码（含摸头、拎起、躺倒、晕眩等）原样保留，切回猫咪皮肤即可复用。
+            TreeRenderer::draw(g, physics, settings, skin);
+            g.Restore(flipState);
+            if (settings.isEditMode) {
+                drawEditOverlay(g, settings.scale, settings.rotationDeg, settings.flipHorizontal);
+            }
+            return;
+        }
+
         if (skin.renderStyle == SkinRenderStyle::Beagle) {
-            drawBeagleScene(g, physics, skin, kbSkin, settings);
-            if (!physics.floatingKeycaps.empty()) {
+            drawBeagleScene(g, physics, skin, kbSkin, settings);            if (!physics.floatingKeycaps.empty()) {
                 drawFloatingKeycaps(g, physics, settings.flipHorizontal);
             }
             g.Restore(flipState);
