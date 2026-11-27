@@ -4254,7 +4254,9 @@ double desiredFrameInterval(const AppState& app, double now) {
                   app.physics.petHeadIntensity > 0.05f ||
                   app.physics.petBodyIntensity > 0.05f;
     if (active) return FRAME_INTERVAL; // 60 Hz when active
-    if (app.physics.musicIntensity > 0.01f || app.physics.isMusicPlaying) return 0.05; // 20 Hz for smooth headphones & rhythm
+    // 30 Hz while music plays (matches macOS). At 20 Hz the ~0.54 s headphone nod got only ~10 frames, and on the
+    // default 15.6 ms timer tick they landed 47/62 ms apart, so it visibly stuttered until input bumped it to 60 Hz (#52).
+    if (app.physics.musicIntensity > 0.01f || app.physics.isMusicPlaying) return 1.0 / 30.0;
     if (app.physics.sleepiness > 0.5f) return 0.10; // 10 Hz when sleeping
     return 0.05; // 20 Hz when idle awake
 }
