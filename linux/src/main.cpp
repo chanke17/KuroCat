@@ -2571,6 +2571,8 @@ static guint desiredFrameIntervalMs(const LinuxApp& app) {
         || app.physics.angerIntensity.value > 0.02f
         || app.physics.petHeadIntensity > 0.02f || app.physics.petBodyIntensity > 0.02f;
     if (busy) return 33;
+    // Headphone nod/sway is continuous motion: keep it at 30fps instead of the 20fps idle rate (#52).
+    if (app.physics.musicIntensity > 0.01f || app.physics.isMusicPlaying) return 33;
     if (app.physics.sleepiness > 0.6f) return 100;
     return 50;
 }
