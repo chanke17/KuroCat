@@ -1,5 +1,8 @@
 #pragma once
 #define NOMINMAX
+// KuroCat 圣诞树版（Christmas Tree edition）
+// 原项目：KuroCat — Copyright (c) 2026 chanke17, MIT License
+// 新增/修改部分：Copyright (c) 2026 Allen Mai, MIT License（沿用原仓库协议）
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -17,6 +20,7 @@
 #include "../../shared/SkinSpec.hpp"
 #include "../../shared/KeyboardSkinSpec.hpp"
 #include "../../shared/BeagleAtlas.hpp"
+#include "TreeRenderer.hpp"   // 圣诞树角色（用户新增）
 
 enum class CatHitZone {
     None,
@@ -229,6 +233,10 @@ public:
     }
 
     static CatHitZone hitTest(Pt p, const CatPhysics& physics, const SkinSpec& skin) {
+        if (skin.renderStyle == SkinRenderStyle::Tree) {
+            // 圣诞树只按树形（树冠三角 + 树干 + 树顶星）判定，点空白处仍然穿透桌面
+            return TreeRenderer::hitTest(p) ? CatHitZone::Body : CatHitZone::None;
+        }
         if (skin.renderStyle == SkinRenderStyle::Douni || skin.renderStyle == SkinRenderStyle::Beagle) {
             float loaf = std::clamp(physics.douniLoafBlend.value, 0.0f, 1.0f);
             float loafS = loaf * loaf * (3.0f - 2.0f * loaf);
@@ -351,9 +359,19 @@ public:
         float dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0f - 2.0f * dizzyFallRaw);
         float preWobble = std::clamp((dizzy - 0.12f) / 0.38f, 0.0f, 1.0f) * (1.0f - dizzyFall);
 
+        if (skin.renderStyle == SkinRenderStyle::Tree) {
+            // 圣诞树角色：树体 + 彩灯 + 树顶星 + 星星/礼物粒子。
+            // 下方所有猫咪绘制代码（含摸头、拎起、躺倒、晕眩等）原样保留，切回猫咪皮肤即可复用。
+            TreeRenderer::draw(g, physics, settings, skin);
+            g.Restore(flipState);
+            if (settings.isEditMode) {
+                drawEditOverlay(g, settings.scale, settings.rotationDeg, settings.flipHorizontal);
+            }
+            return;
+        }
+
         if (skin.renderStyle == SkinRenderStyle::Beagle) {
-            drawBeagleScene(g, physics, skin, kbSkin, settings);
-            if (!physics.floatingKeycaps.empty()) {
+            drawBeagleScene(g, physics, skin, kbSkin, settings);            if (!physics.floatingKeycaps.empty()) {
                 drawFloatingKeycaps(g, physics, settings.flipHorizontal);
             }
             g.Restore(flipState);
@@ -6738,20 +6756,51 @@ private:
                     Color cols[2] = { Color(255, 227, 201, 159), Color(255, 200, 167, 122) };
                     REAL locs[2] = { 0.0f, 1.0f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 2);
+                } else if (isTabby(skin)) {
+                    Pt ctrl = { (limb.root.x + limb.tip.x) * 0.5f + limb.bendX * 0.5f, (limb.root.y + limb.tip.y) * 0.5f };
+                    RectF pawRect(limb.tip.x - geo.r1 * 0.9f, limb.tip.y - geo.r1 * 0.45f, geo.r1 * 1.8f, geo.r1 * 1.35f);
+                    GraphicsState ts = lg.Save();
+                    lg.SetClip(&fillP, CombineModeIntersect);
+                    tabby::drawLimb(lg, fillP, pawRect, limb.root, ctrl, limb.tip, limb.startW, limb.endW);
+                    lg.Restore(ts);
                 } else if (skin.colorpoint()) {
                     const SkinColor& midC = pal.pointsMid.set ? pal.pointsMid : pal.legs;
-                    Color cols[4] = { col(pal.body), col(pal.body), col(midC), col(pal.paws) };
-                    REAL locs[4] = { 0.0f, 0.20f, 0.54f, 0.88f };
-                    fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
+                    const SkinColor& pointC = pal.points.set ? pal.points : pal.paws;
+                    if (pointC.sameAs(pal.paws)) {
+                        Color cols[4] = { withAlpha(pal.body, 0), col(pal.body), col(midC), col(pal.paws) };
+                        REAL locs[4] = { 0.0f, 0.16f, 0.48f, 0.78f };
+                        fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
+                    } else {
+                        Color cols[5] = { withAlpha(pal.body, 0), col(pal.body), col(midC), col(pointC), col(pal.paws) };
+                        REAL locs[5] = { 0.0f, 0.16f, 0.46f, 0.72f, 0.88f };
+                        fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 5);
+                    }
                 } else if (auto pgIt = skin.partGradients.find(limbKey); pgIt != skin.partGradients.end()) {
                     fillPartGradient(lg, &fillP, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), pgIt->second);
-                } else if (!limb.isBehindBody && !pal.legs.sameAs(pal.body)) {
-                    Color cols[4] = { col(pal.body), col(pal.body), col(pal.legs), col(pal.paws) };
-                    REAL locs[4] = { 0.0f, 0.14f, 0.42f, 0.82f };
-                    fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
+                } else if (!limb.isBehindBody) {
+                    const SkinColor& legC = pal.legs;
+                    const SkinColor& pawC = pal.paws;
+                    if (pal.belly.set && !pal.belly.sameAs(legC)) {
+                        if (!pawC.sameAs(legC)) {
+                            Color cols[4] = { col(pal.belly), col(legC), col(legC), col(pawC) };
+                            REAL locs[4] = { 0.0f, 0.30f, 0.68f, 0.84f };
+                            fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
+                        } else {
+                            Color cols[2] = { col(pal.belly), col(legC) };
+                            REAL locs[2] = { 0.0f, 0.30f };
+                            fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 2);
+                        }
+                    } else if (!pawC.sameAs(legC)) {
+                        Color cols[3] = { col(legC), col(legC), col(pawC) };
+                        REAL locs[3] = { 0.0f, 0.68f, 0.84f };
+                        fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 3);
+                    } else {
+                        SolidBrush legBrush(col(legC));
+                        lg.FillPath(&legBrush, &fillP);
+                    }
                 } else {
-                    const SkinColor& legC = limb.isBehindBody && pal.hindLeg.set ? pal.hindLeg : pal.legs;
-                    const SkinColor& pawC = limb.isBehindBody && pal.hindPaw.set ? pal.hindPaw : pal.paws;
+                    const SkinColor& legC = pal.hindLeg.set ? pal.hindLeg : pal.legs;
+                    const SkinColor& pawC = pal.hindPaw.set ? pal.hindPaw : pal.paws;
                     Color cols[2] = { col(legC), col(pawC) };
                     REAL locs[2] = { 0.22f, 0.75f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 2);
@@ -6863,10 +6912,15 @@ private:
                         }
                     }
                     if (!isDazed && pal.tailTip.set) {
-                        Pen tipPen(col(pal.tailTip), tailW * 0.92f);
+                        // Tail tip = last 22% of the tail curve (de Casteljau split at t = 0.78, same as drawTail's
+                        // idle tip). A straight chord only touches the curve at the tip and cuts across the bend, so the
+                        // colour ended up outside the silhouette on the convex side and left fur showing on the inside.
+                        const float tipT = 0.78f;
+                        Pt ta = lerpPt(tailRoot, tailC1, tipT), tb = lerpPt(tailC1, tailC2, tipT), tq = lerpPt(tailC2, tailTip, tipT);
+                        Pt td = lerpPt(ta, tb, tipT), te = lerpPt(tb, tq, tipT), ts = lerpPt(td, te, tipT);
+                        Pen tipPen(col(pal.tailTip), tailW);
                         setRound(tipPen);
-                        Pt tStart = lerpPt(tailC2, tailTip, 0.35f);
-                        lg.DrawLine(&tipPen, tStart.x, tStart.y, tailTip.x, tailTip.y);
+                        lg.DrawBezier(&tipPen, PointF(ts.x, ts.y), PointF(te.x, te.y), PointF(tq.x, tq.y), PointF(tailTip.x, tailTip.y));
                     }
                 }
             }

@@ -14,6 +14,12 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <winhttp.h>
+// ============================================================================
+// KuroCat 圣诞树版（Christmas Tree edition）
+// 原项目：KuroCat — Copyright (c) 2026 chanke17, MIT License（见 LICENSE）
+// 新增/修改部分：Copyright (c) 2026 Allen Mai, MIT License（沿用原仓库协议）
+// 说明：猫咪角色代码全部保留（未被删除），默认渲染「圣诞树」角色。
+// ============================================================================
 // MSVC's GDI+ headers call unqualified min()/max() inside inline helpers; NOMINMAX
 // removes the macros, so the std overloads must be visible before <gdiplus.h>.
 #include <algorithm>
@@ -29,7 +35,9 @@ using std::max;
 #include <vector>
 #include <unordered_set>
 #include <cmath>
+#include <cstdlib>
 #include <cwchar>
+#include <cwctype>
 #include <atomic>
 #include <thread>
 #include <mutex>
@@ -60,7 +68,9 @@ using std::max;
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.5.2";
+// 圣诞树版独立版本号：高于上游 1.5.2，避免「同版本只会唤醒旧实例」；
+// 同时用于和官方版区分，防止自更新把改版覆盖（自更新已关闭）。
+constexpr const wchar_t* APP_VERSION = L"1.6.0-tree.1";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
@@ -124,6 +134,11 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_RUN_AS_ADMIN,
     CMD_QUIT,
     CMD_COAT_TABBY,
+    // 圣诞树配色预设（用户新增）
+    CMD_TREE_CLASSIC,
+    CMD_TREE_SNOW,
+    CMD_TREE_ROSE,
+    CMD_TREE_NEON,
     CMD_EYE_OLIVE_GOLD,
     CMD_TABLET_AUTO,
     CMD_TABLET_ON,
@@ -198,6 +213,9 @@ struct RenderedPoseSnapshot {
     int breath100 = 0, blink100 = 0, sleep100 = 0;
     int tail10 = 0, purr100 = 0, happy100 = 0;
     int sparkleCount = 0, zzzCount = 0, noteCount = 0;
+    // 圣诞树版新增：彩灯闪烁相位 + 礼物粒子数量（不加入快照会导致动画被“跳过重绘”冻住）
+    int treePhase20 = 0, giftCount = 0;
+    int music100 = 0, musicPhase20 = 0, marquee20 = 0;
 
     bool operator==(const RenderedPoseSnapshot& o) const {
         return w == o.w && h == o.h &&
@@ -215,7 +233,9 @@ struct RenderedPoseSnapshot {
                leftPawY10 == o.leftPawY10 && rightPawY10 == o.rightPawY10 && thirdPawY10 == o.thirdPawY10 &&
                breath100 == o.breath100 && blink100 == o.blink100 && sleep100 == o.sleep100 &&
                tail10 == o.tail10 && purr100 == o.purr100 && happy100 == o.happy100 &&
-               sparkleCount == o.sparkleCount && zzzCount == o.zzzCount && noteCount == o.noteCount;
+               sparkleCount == o.sparkleCount && zzzCount == o.zzzCount && noteCount == o.noteCount &&
+               treePhase20 == o.treePhase20 && giftCount == o.giftCount &&
+               music100 == o.music100 && musicPhase20 == o.musicPhase20 && marquee20 == o.marquee20;
     }
 };
 
@@ -244,6 +264,7 @@ struct AppState {
     bool isVisible = true;
     bool hiddenByFullscreen = false;
     bool isDragging = false;
+    int dragMouseButton = 0; // 1 = primary (WM_LBUTTONDOWN), 2 = secondary (WM_RBUTTONDOWN when SM_SWAPBUTTON)
     int activeResizeCorner = -1; // -1 = none, 0=TL, 1=TR, 2=BL, 3=BR
     POINT resizeAnchorScreenPt = {};
     bool isRotating = false;
@@ -251,6 +272,7 @@ struct AppState {
     float rotateStartAngle = 0.0f;
     float rotateStartDeg = 0.0f;
     bool rButtonDown = false;
+    POINT rButtonDownCursor = {};
     bool pendingMenuAfterAlt = false;
     double pendingMenuAltUpTime = 0.0;
     POINT pendingMenuPt = {};
@@ -814,6 +836,20 @@ void startInAppUpdate(AppState& app) {
     }
 }
 
+void fillTrayTipText(const AppState& app, wchar_t* buf, size_t cap) {
+    const wchar_t* tip = nullptr;
+    if (app.settings.isEnglish) {
+        tip = app.isVisible
+            ? L"KuroCat Desktop Pet (Click to open menu)"
+            : L"KuroCat (Hidden - Click tray icon to show)";
+    } else {
+        tip = app.isVisible
+            ? L"KuroCat \u9ED1\u732B\u952E\u76D8\u684C\u5BA0 (\u53F3\u952E/\u5DE6\u952E\u6253\u5F00\u83DC\u5355)"
+            : L"KuroCat \u9ED1\u732B\u684C\u5BA0 (\u5DF2\u9690\u85CF \u00B7 \u70B9\u51FB\u6258\u76D8\u56FE\u6807\u6062\u590D\u663E\u793A)";
+    }
+    wcsncpy_s(buf, cap, tip, _TRUNCATE);
+}
+
 void registerTrayIcon(AppState& app) {
     if (!app.trayIcon) app.trayIcon = createCatTrayIcon();
     app.nid = {};
@@ -823,8 +859,37 @@ void registerTrayIcon(AppState& app) {
     app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     app.nid.uCallbackMessage = WM_TRAYICON;
     app.nid.hIcon = app.trayIcon;
-    wcscpy_s(app.nid.szTip, L"KuroCat \u9ED1\u732B\u952E\u76D8\u684C\u5BA0 (\u53F3\u952E/\u5DE6\u952E\u6253\u5F00\u83DC\u5355)");
-    Shell_NotifyIconW(NIM_ADD, &app.nid);
+    fillTrayTipText(app, app.nid.szTip, sizeof(app.nid.szTip) / sizeof(app.nid.szTip[0]));
+    if (!Shell_NotifyIconW(NIM_ADD, &app.nid)) {
+        Shell_NotifyIconW(NIM_MODIFY, &app.nid);
+    }
+}
+
+void updateTrayTip(AppState& app) {
+    if (!app.nid.hWnd || !IsWindow(app.nid.hWnd)) return;
+    NOTIFYICONDATAW tipNid = app.nid;
+    tipNid.uFlags = NIF_TIP;
+    fillTrayTipText(app, tipNid.szTip, sizeof(tipNid.szTip) / sizeof(tipNid.szTip[0]));
+    if (!Shell_NotifyIconW(NIM_MODIFY, &tipNid)) {
+        registerTrayIcon(app);
+    } else {
+        wcscpy_s(app.nid.szTip, tipNid.szTip);
+    }
+}
+
+void ensureTrayIcon(AppState& app) {
+    if (!app.nid.hWnd || !IsWindow(app.nid.hWnd)) {
+        registerTrayIcon(app);
+        return;
+    }
+    NOTIFYICONDATAW mod = app.nid;
+    mod.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    fillTrayTipText(app, mod.szTip, sizeof(mod.szTip) / sizeof(mod.szTip[0]));
+    if (!Shell_NotifyIconW(NIM_MODIFY, &mod)) {
+        registerTrayIcon(app);
+    } else {
+        wcscpy_s(app.nid.szTip, mod.szTip);
+    }
 }
 
 HICON createCatTrayIcon() {
@@ -921,6 +986,30 @@ void assertTopmost(AppState& app) {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
 }
 
+void setPetVisible(AppState& app, bool visible, bool showHintBalloon = false) {
+    app.isVisible = visible;
+    app.hiddenByFullscreen = false;
+    if (app.hwnd && IsWindow(app.hwnd)) {
+        ShowWindow(app.hwnd, visible ? SW_SHOWNOACTIVATE : SW_HIDE);
+        if (visible) {
+            double now = nowSeconds();
+            app.lastTickTime = now;
+            app.lastRenderTime = now;
+            app.nextFrameTime = now;
+            app.forceRedraw = true;
+            assertTopmost(app);
+        }
+    }
+    ensureTrayIcon(app);
+    if (!visible && showHintBalloon) {
+        bool en = app.settings.isEnglish;
+        showTrayBalloon(app,
+            en ? L"KuroCat is hidden in the system tray" : L"KuroCat \u5DF2\u9690\u85CF\u5230\u7CFB\u7EDF\u6258\u76D8",
+            en ? L"Click the KuroCat tray icon (check ^ hidden icons) to show the pet again."
+               : L"\u70B9\u51FB\u53F3\u4E0B\u89D2\u6258\u76D8\uFF08\u6216 ^ \u6298\u53E0\u533A\u57DF\uFF09\u4E2D\u7684\u5C0F\u732B\u56FE\u6807\u5373\u53EF\u91CD\u65B0\u663E\u793A\u684C\u5BA0\u3002");
+    }
+}
+
 void demoteTopmostForUpdateDialog(AppState& app) {
     if (app.hwnd && IsWindow(app.hwnd) && (GetWindowLongPtrW(app.hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST)) {
         SetWindowPos(app.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
@@ -961,6 +1050,8 @@ void recoverAfterSystemEvent(AppState& app) {
     app.destroyBuffer();
     app.ulwFailures = 0;
     app.isDragging = false;
+    app.dragMouseButton = 0;
+    app.rButtonDown = false;
     app.lastTickTime = now;
     app.nextFrameTime = 0.0;
     app.lastRenderTime = now;
@@ -971,13 +1062,52 @@ void recoverAfterSystemEvent(AppState& app) {
     app.pendingTopmostTime = now + 1.5; // some games re-assert topmost shortly after a mode switch
 }
 
+static std::wstring queryProcessBaseNameLower(DWORD pid) {
+    if (pid == 0) return L"";
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!hProc) return L"";
+    std::wstring res;
+    wchar_t path[MAX_PATH * 2] = {};
+    DWORD sz = (DWORD)(sizeof(path) / sizeof(path[0]));
+    if (QueryFullProcessImageNameW(hProc, 0, path, &sz) && sz > 0) {
+        const wchar_t* base = wcsrchr(path, L'\\');
+        base = base ? base + 1 : path;
+        res = base;
+        for (wchar_t& ch : res) ch = (wchar_t)towlower(ch);
+    }
+    CloseHandle(hProc);
+    return res;
+}
+
+static bool isKnownMediaOrBrowserProcess(const std::wstring& procName) {
+    if (procName.empty()) return false;
+    static const wchar_t* kApps[] = {
+        L"cloudmusic.exe", L"qqmusic.exe", L"spotify.exe", L"kugou.exe",
+        L"kwmusic.exe", L"kuwomusic.exe", L"sodamusic.exe", L"qishui.exe",
+        L"applemusic.exe", L"itunes.exe", L"foobar2000.exe", L"musicbee.exe",
+        L"aimp.exe", L"lx-music-desktop.exe", L"yesplaymusic.exe", L"cider.exe",
+        L"potplayermini64.exe", L"potplayermini.exe", L"vlc.exe", L"mpv.exe",
+        L"mpc-hc64.exe", L"mpc-be64.exe", L"wmplayer.exe", L"microsoft.media.player.exe",
+        L"tidal.exe", L"youtube music.exe", L"bilibili.exe", L"listen1.exe",
+        L"zyplayer.exe", L"kodi.exe", L"audacious.exe",
+        L"chrome.exe", L"msedge.exe", L"firefox.exe", L"brave.exe",
+        L"opera.exe", L"opera_gx.exe", L"vivaldi.exe", L"arc.exe"
+    };
+    for (const wchar_t* appName : kApps) {
+        if (procName == appName) return true;
+    }
+    return false;
+}
+
 /// Returns true when any active audio output endpoint (speakers, 3.5mm/USB/Bluetooth headphones)
 /// currently has a non-system application outputting audible audio (videos, browsers, Apple Music,
 /// music players, etc.). Uses WASAPI endpoint enumeration + AudioSessionState + IAudioMeterInformation,
-/// with a safe fallback for Win11 Bluetooth A2DP / hardware-offloaded endpoints whose GetPeakValue()
-/// reports 0.0f while audio is actively playing.
+/// checking both session-level and endpoint-level meters (fixes browsers / hardware-offloaded /
+/// spatial audio streams whose session peak reports 0.0f while endpoint peak > 0) plus a safe
+/// per-session fallback for Win11 Bluetooth A2DP / offload endpoints whose meters stay at 0.0f.
 static bool isSystemAudioPlaying() {
-    static std::unordered_set<std::wstring> s_meterWorkingDevices;
+    static std::unordered_set<std::wstring> s_sessionMeterWorkingKeys;
+    static std::unordered_set<std::wstring> s_epMeterWorkingDevices;
 
     IMMDeviceEnumerator* enumerator = nullptr;
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
@@ -1063,9 +1193,11 @@ static bool isSystemAudioPlaying() {
                     AudioSessionState st = AudioSessionStateInactive;
                     if (SUCCEEDED(ctrl->GetState(&st)) && st == AudioSessionStateActive) {
                         bool isSystemSound = false;
+                        DWORD sessionPid = 0;
                         IAudioSessionControl2* ctrl2 = nullptr;
                         if (SUCCEEDED(ctrl->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&ctrl2)) && ctrl2) {
                             if (ctrl2->IsSystemSoundsSession() == S_OK) isSystemSound = true;
+                            ctrl2->GetProcessId(&sessionPid);
                             ctrl2->Release();
                         }
                         bool sessionMuted = false;
@@ -1079,6 +1211,10 @@ static bool isSystemAudioPlaying() {
                             sVol->Release();
                         }
                         if (!isSystemSound && !sessionMuted && sessionVolume > 0.001f) {
+                            std::wstring procName = queryProcessBaseNameLower(sessionPid);
+                            std::wstring sessionKey = devId + L"|"
+                                + (!procName.empty() ? procName
+                                    : (sessionPid != 0 ? (L"pid:" + std::to_wstring(sessionPid)) : L"sys"));
                             float sPeak = 0.0f;
                             bool hasSessionPeak = false;
                             IAudioMeterInformation* sMeter = nullptr;
@@ -1088,15 +1224,28 @@ static bool isSystemAudioPlaying() {
                                 }
                                 sMeter->Release();
                             }
-                            if (hasSessionPeak && sPeak > 0.0008f) {
-                                if (!devId.empty()) s_meterWorkingDevices.insert(devId);
+                            if (hasSessionPeak && sPeak > 0.0001f) {
+                                if (!devId.empty()) {
+                                    if (s_sessionMeterWorkingKeys.size() > 256) s_sessionMeterWorkingKeys.clear();
+                                    s_sessionMeterWorkingKeys.insert(sessionKey);
+                                }
                                 found = true;
-                            } else if (hasEpMeter && epPeak > 0.001f && !hasSessionPeak) {
+                            } else if (hasEpMeter && epPeak > 0.00015f) {
+                                // Some browser / spatial / hardware-offloaded sessions report sPeak == 0.0f
+                                // while the endpoint meter itself clearly reports audible playback.
+                                if (!devId.empty()) {
+                                    if (s_epMeterWorkingDevices.size() > 256) s_epMeterWorkingDevices.clear();
+                                    s_epMeterWorkingDevices.insert(devId);
+                                }
                                 found = true;
                             } else if (!hasEpMeter || epMeterChannels == 0 || !hasSessionPeak ||
-                                       devId.empty() || s_meterWorkingDevices.find(devId) == s_meterWorkingDevices.end()) {
-                                // Endpoint meter has never reported non-zero session peaks (e.g. Win11 Bluetooth A2DP
-                                // / hardware-offloaded stream) or metering is unavailable: trust active unmuted session.
+                                       devId.empty() ||
+                                       (s_sessionMeterWorkingKeys.find(sessionKey) == s_sessionMeterWorkingKeys.end() &&
+                                        s_epMeterWorkingDevices.find(devId) == s_epMeterWorkingDevices.end())) {
+                                // Metering has never reported non-zero peaks for this session/endpoint
+                                // (e.g. Win11 BT A2DP, hardware offload, or exclusive mode): trust active session.
+                                found = true;
+                            } else if (isKnownMediaOrBrowserProcess(procName) && hasEpMeter && epPeak > 0.00005f) {
                                 found = true;
                             }
                         }
@@ -1122,10 +1271,15 @@ void housekeeping(AppState& app) {
     if (!app.hwnd) return;
 
     // Read background WASAPI polling result without blocking the UI thread
+    bool prevMusic = app.physics.isMusicPlaying;
     app.audioPollingEnabled.store(app.settings.autoHeadphonesOnMusic, std::memory_order_relaxed);
     app.physics.isMusicPlaying = app.settings.autoHeadphonesOnMusic
         ? app.audioSustainedPlaying.load(std::memory_order_relaxed)
         : false;
+    if (app.physics.isMusicPlaying != prevMusic) {
+        app.forceRedraw = true;
+        app.nextFrameTime = std::min(app.nextFrameTime, now);
+    }
 
     bool fullscreenFg = isForegroundFullscreen(app.hwnd);
     bool obsBg = (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop);
@@ -1260,7 +1414,8 @@ void applyOBSMode(AppState& app) {
 const SkinSpec& activeSkin(const AppState& app) {
     if (!app.settings.customSkin.empty())
         if (const SkinSpec* s = app.skins.find(app.settings.customSkin)) return *s;
-    return builtInSkin(app.settings.coatTheme);
+    // 圣诞树版默认返回内置圣诞树皮肤；猫咪内置皮肤 builtInSkin() 仍完整保留，日后可切回
+    return builtInTreeSkin(app.settings.treeTheme);
 }
 
 const KeyboardSkinSpec& builtInKeyboardSkin(KeyboardTheme theme) {
@@ -1611,6 +1766,7 @@ LRESULT CALLBACK dressingRoomProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
+
         case WM_DESTROY:
             if (app && app->dressingRoom == hwnd) app->dressingRoom = nullptr;
             return 0;
@@ -1730,30 +1886,54 @@ bool promptRenameSkin(AppState& app, const std::string& id) {
     RenameDialogState st;
     st.value = utf8ToWide(s->name);
 
-    int w = 360, h = 150;
+    // Layout is authored in 96-dpi design units and scaled by the system DPI. A fixed 360x150 window
+    // left less client height than the caption + button row need at 125/150/200 % scaling, so the
+    // Save/Cancel row was clipped by the bottom edge (app.manifest is PerMonitorV2).
+    HDC screenDc = GetDC(nullptr);
+    float scale = GetDeviceCaps(screenDc, LOGPIXELSY) / 96.0f;
+    ReleaseDC(nullptr, screenDc);
+    auto px = [scale](int v) { return (int)std::lround(v * scale); };
+    const int clientW = px(360), clientH = px(124);   // label + edit + button row + bottom margin
+    const DWORD dlgStyle = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    const DWORD dlgExStyle = WS_EX_TOPMOST | WS_EX_DLGMODALFRAME;
+    RECT frame = {0, 0, clientW, clientH};
+    AdjustWindowRectEx(&frame, dlgStyle, FALSE, dlgExStyle);   // rough size; corrected below
+    int w = frame.right - frame.left, h = frame.bottom - frame.top;
     int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     HWND dlg = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_DLGMODALFRAME,
+        dlgExStyle,
         clsName,
         en ? L"Rename Skin" : L"重命名皮肤",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        dlgStyle,
         sx, sy, w, h,
         app.settingsWnd ? app.settingsWnd : app.menuOwnerHwnd,
         nullptr, inst, &st
     );
     if (!dlg) return false;
+    {
+        // AdjustWindowRectEx ignores the monitor DPI, so the caption + frame can be taller than it
+        // assumed and eat the client area. Measure what we actually got and grow to fit.
+        RECT cr = {}, wr = {};
+        GetClientRect(dlg, &cr);
+        GetWindowRect(dlg, &wr);
+        int addW = std::max(0, clientW - (int)cr.right), addH = std::max(0, clientH - (int)cr.bottom);
+        int ww = (wr.right - wr.left) + addW, wh = (wr.bottom - wr.top) + addH;
+        SetWindowPos(dlg, nullptr, (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, (GetSystemMetrics(SM_CYSCREEN) - wh) / 2,
+                     ww, wh, SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(dlg, SW_SHOWNORMAL);
+    }
 
     HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     HWND lbl = CreateWindowExW(0, L"STATIC",
         en ? L"Enter a new skin name (max 40 chars):" : L"请输入新的皮肤名称（最多 40 字）：",
-        WS_CHILD | WS_VISIBLE, 18, 16, 316, 20, dlg, nullptr, inst, nullptr);
+        WS_CHILD | WS_VISIBLE, px(18), px(16), px(316), px(20), dlg, nullptr, inst, nullptr);
     st.editHwnd = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", st.value.c_str(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 18, 42, 316, 24, dlg, (HMENU)1001, inst, nullptr);
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, px(18), px(42), px(316), px(26), dlg, (HMENU)1001, inst, nullptr);
     HWND okBtn = CreateWindowExW(0, L"BUTTON", en ? L"Save" : L"保存",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 174, 80, 76, 26, dlg, (HMENU)IDOK, inst, nullptr);
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, px(174), px(80), px(76), px(26), dlg, (HMENU)IDOK, inst, nullptr);
     HWND cancelBtn = CreateWindowExW(0, L"BUTTON", en ? L"Cancel" : L"取消",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 258, 80, 76, 26, dlg, (HMENU)IDCANCEL, inst, nullptr);
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, px(258), px(80), px(76), px(26), dlg, (HMENU)IDCANCEL, inst, nullptr);
     for (HWND c : {lbl, st.editHwnd, okBtn, cancelBtn}) SendMessageW(c, WM_SETFONT, (WPARAM)font, TRUE);
     SendMessageW(st.editHwnd, EM_SETLIMITTEXT, 40, 0);
     SendMessageW(st.editHwnd, EM_SETSEL, 0, -1);
@@ -2099,24 +2279,22 @@ void rebuildCombosAndSync(AppState& app) {
     bool en = app.settings.isEnglish;
     auto tr = [&](const wchar_t* zh, const wchar_t* eng) -> const wchar_t* { return en ? eng : zh; };
 
-    // Coat / Skin combo (6 built-in + imported)
+    // Coat / Skin combo（圣诞树版：4 个内置树配色 + 已导入皮肤）
     HWND coatCb = GetDlgItem(hwnd, ID_COAT_COMBO);
     if (coatCb) {
         SendMessageW(coatCb, CB_RESETCONTENT, 0, 0);
-        const wchar_t* builtins[6] = {
-            tr(L"\u7ECF\u5178\u5C0F\u9ED1\u732B", L"Classic Black Cat"),
-            tr(L"\u6316\u7164\u66B9\u7F57\u732B", L"Siamese Cat"),
-            tr(L"\u7F8E\u77ED\u94F6\u864E\u6591", L"Silver Tabby Shorthair"),
-            tr(L"\u6A58\u767D\u732B", L"Orange & White Cat"),
-            tr(L"\u5446\u732B", L"Dazed Cat"),
-            tr(L"\u72F8\u82B1\u732B", L"Tabby Cat")
+        const wchar_t* builtins[4] = {
+            tr(L"\u7ECF\u5178\u5723\u8BDE\u7EFF", L"Classic Christmas Green"),
+            tr(L"\u96EA\u591C\u84DD", L"Snowy Night Blue"),
+            tr(L"\u7C89\u91D1\u94C3\u94DB", L"Rose Gold Bells"),
+            tr(L"\u6697\u591C\u9713\u8679", L"Midnight Neon")
         };
-        for (int i = 0; i < 6; ++i) SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)builtins[i]);
-        int sel = (int)app.settings.coatTheme;
+        for (int i = 0; i < 4; ++i) SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)builtins[i]);
+        int sel = (int)app.settings.treeTheme;
         for (size_t i = 0; i < app.skins.skins.size(); ++i) {
             SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)utf8ToWide(app.skins.displayName(app.skins.skins[i])).c_str());
             if (!app.settings.customSkin.empty() && app.skins.skins[i].id == app.settings.customSkin) {
-                sel = 6 + (int)i;
+                sel = 4 + (int)i;
             }
         }
         SendMessageW(coatCb, CB_SETCURSEL, (WPARAM)sel, 0);
@@ -2413,19 +2591,11 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 if (sel < 0) return 0;
                 if (id == ID_COAT_COMBO) {
                     app->settings.overrideSkinIris = false;
-                    if (sel < 6) {
+                    if (sel < 4) {
                         app->settings.customSkin.clear();
-                        app->settings.coatTheme = (CatCoatTheme)sel;
-                        switch (app->settings.coatTheme) {
-                            case CatCoatTheme::ClassicBlack: app->settings.eyeTheme = EyeColorTheme::NeonChartreuse; break;
-                            case CatCoatTheme::Siamese:      app->settings.eyeTheme = EyeColorTheme::SiameseBlue; break;
-                            case CatCoatTheme::Shorthair:    app->settings.eyeTheme = EyeColorTheme::ReferenceHazel; break;
-                            case CatCoatTheme::OrangeWhite:  app->settings.eyeTheme = EyeColorTheme::WarmAmber; break;
-                            case CatCoatTheme::Dazed:        app->settings.eyeTheme = EyeColorTheme::SoftAmber; break;
-                            case CatCoatTheme::Tabby:        app->settings.eyeTheme = EyeColorTheme::OliveGold; break;
-                        }
-                    } else if ((size_t)(sel - 6) < app->skins.skins.size()) {
-                        app->settings.customSkin = app->skins.skins[sel - 6].id;
+                        app->settings.treeTheme = (TreeTheme)sel;
+                    } else if ((size_t)(sel - 4) < app->skins.skins.size()) {
+                        app->settings.customSkin = app->skins.skins[sel - 4].id;
                     }
                     app->settings.saveToRegistry();
                     refreshDressingRoom(*app);
@@ -2460,6 +2630,7 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                     if (newEn != app->settings.isEnglish) {
                         app->settings.isEnglish = newEn;
                         app->settings.saveToRegistry();
+                        updateTrayTip(*app);
                         DestroyWindow(hwnd);
                         showSettingsWindow(*app);
                     }
@@ -2611,6 +2782,7 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
+
         case WM_DESTROY:
             if (app && app->settingsWnd == hwnd) {
                 app->settingsWnd = nullptr;
@@ -2694,7 +2866,7 @@ void showSettingsWindow(AppState& app) {
     // Section 1: Appearance & Orientation
     addCtrl(L"BUTTON", tr(L"\u5916\u89C2\u4E0E\u65B9\u5411", L"Appearance & Orientation"), BS_GROUPBOX, 14, 10, 512, 264, 0, true);
 
-    addCtrl(L"STATIC", tr(L"\u732B\u54AA\u76AE\u80A4", L"Cat Skin"), SS_LEFT, 28, 38, 76, 20, 0);
+    addCtrl(L"STATIC", tr(L"\u5723\u8BDE\u6811\u76AE\u80A4", L"Tree Skin"), SS_LEFT, 28, 38, 76, 20, 0);
     addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 34, 148, 220, ID_COAT_COMBO);
     addCtrl(L"BUTTON", tr(L"\u6362\u88C5\u95F4", L"Wardrobe"), BS_PUSHBUTTON | WS_TABSTOP, 262, 34, 60, 24, ID_BTN_DRESSING);
     addCtrl(L"BUTTON", tr(L"\u6539\u540D", L"Name"), BS_PUSHBUTTON | WS_TABSTOP, 326, 34, 48, 24, ID_BTN_RENAME_SKIN);
@@ -2707,7 +2879,7 @@ void showSettingsWindow(AppState& app) {
     addCtrl(L"BUTTON", tr(L"\u6253\u5F00", L"Open"), BS_PUSHBUTTON | WS_TABSTOP, 396, 66, 50, 24, ID_BTN_OPEN_SKINS_DIR);
     addCtrl(L"BUTTON", tr(L"\u9ED8\u8BA4", L"Reset"), BS_PUSHBUTTON | WS_TABSTOP, 450, 66, 62, 24, ID_BTN_RESET_SKINS_DIR);
 
-    addCtrl(L"STATIC", tr(L"\u77B3\u8272\u5207\u6362", L"Eye Color"), SS_LEFT, 28, 102, 76, 20, 0);
+    addCtrl(L"STATIC", tr(L"\u661F\u661F\u989C\u8272", L"Star Color"), SS_LEFT, 28, 102, 76, 20, 0);
     addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 98, 290, 220, ID_EYE_COMBO);
     addCtrl(L"BUTTON", tr(L"\u6846\u9009\u8C03\u6574", L"Edit Box"), BS_PUSHBUTTON | WS_TABSTOP, 410, 98, 102, 24, ID_BTN_EDIT_MODE);
 
@@ -2932,6 +3104,7 @@ LRESULT CALLBACK updateWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
+
         case WM_DESTROY:
             if (app && app->updateWnd == hwnd) {
                 app->updateWnd = nullptr;
@@ -3170,7 +3343,7 @@ void handleUpdateDownloadResult(AppState& app, const UpdateDownloadResult& res) 
         launched = launchProcessArgs(res.newExePath, args);
     }
     if (launched) {
-        PostQuitMessage(0);
+        quitApp(app);
         return;
     }
     bool en = app.settings.isEnglish;
@@ -3216,18 +3389,23 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     // Essential quick actions
-    AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? tr(L"\u9690\u85CF\u684C\u5BA0", L"Hide Pet") : tr(L"\u663E\u793A\u684C\u5BA0", L"Show Pet"));
+    AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE,
+        app.isVisible ? tr(L"\u9690\u85CF\u684C\u5BA0", L"Hide Pet")
+                      : tr(L"\U0001F431 \u663E\u793A\u684C\u5BA0", L"\U0001F431 Show Pet"));
+    if (!app.isVisible) {
+        SetMenuDefaultItem(menu, CMD_TOGGLE_VISIBLE, FALSE);
+    }
 
-    // Quick Cat Skin switcher
+    // Quick Christmas Tree palette switcher
     HMENU coatMenu = CreatePopupMenu();
     bool customActive = app.skins.find(app.settings.customSkin) != nullptr;
-    auto coatCheck = [&](CatCoatTheme c) -> UINT { return !customActive && app.settings.coatTheme == c ? MF_CHECKED : 0; };
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::ClassicBlack), CMD_COAT_BLACK, tr(L"\u7ECF\u5178\u5C0F\u9ED1\u732B (\u539F\u7248)", L"Classic Black Cat"));
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Siamese), CMD_COAT_SIAMESE, tr(L"\u6316\u7164\u66B9\u7F57\u732B", L"Siamese Cat"));
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Shorthair), CMD_COAT_SHORTHAIR, tr(L"\u7F8E\u77ED\uFF08\u94F6\u864E\u6591\u52A0\u767D\uFF09", L"Silver Tabby Shorthair"));
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::OrangeWhite), CMD_COAT_ORANGE_WHITE, tr(L"\u6A58\u767D\u732B", L"Orange & White Cat"));
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Dazed), CMD_COAT_DAZED, tr(L"\u5446\u732B", L"Dazed Cat"));
-    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Tabby), CMD_COAT_TABBY, tr(L"\u72F8\u82B1\u732B", L"Tabby Cat"));
+    auto coatCheck = [&](TreeTheme t) -> UINT { return !customActive && app.settings.treeTheme == t ? MF_CHECKED : 0; };
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(TreeTheme::ClassicGreen), CMD_TREE_CLASSIC, tr(L"\u7ECF\u5178\u5723\u8BDE\u7EFF", L"Classic Christmas Green"));
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(TreeTheme::SnowBlue), CMD_TREE_SNOW, tr(L"\u96EA\u591C\u84DD", L"Snowy Night Blue"));
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(TreeTheme::RoseGold), CMD_TREE_ROSE, tr(L"\u7C89\u91D1\u94C3\u94DB", L"Rose Gold Bells"));
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(TreeTheme::MidnightNeon), CMD_TREE_NEON, tr(L"\u6697\u591C\u9713\u8679", L"Midnight Neon"));
+    // 猫咪配色菜单（原样保留，日后切回猫咪时重新启用即可）
+    // AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::ClassicBlack), CMD_COAT_BLACK, ...);
     size_t listed = std::min<size_t>(app.skins.skins.size(), CMD_SKIN_RANGE);
     if (listed) AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     for (size_t i = 0; i < listed; ++i) {
@@ -3251,7 +3429,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(coatMenu, MF_STRING, CMD_IMPORT_SKIN, tr(L"\u5BFC\u5165\u76AE\u80A4 / \u6362\u88C5\u95F4\u2026", L"Import Skin / Wardrobe..."));
     AppendMenuW(coatMenu, MF_STRING, CMD_OPEN_WORKSHOP, tr(L"\u6253\u5F00\u76AE\u80A4\u5DE5\u574A\u2026", L"Open Skin Workshop..."));
-    AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, tr(L"\u732B\u54AA\u76AE\u80A4 \U0001F431", L"Cat Skin \U0001F431"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, tr(L"\u5723\u8BDE\u6811\u76AE\u80A4 \U0001F384", L"Christmas Tree Skin \U0001F384"));
 
     // Skin Workshop (Create custom skins) right on the top-level menu
     AppendMenuW(menu, MF_STRING, CMD_OPEN_WORKSHOP,
@@ -3269,17 +3447,11 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_OPEN_SETTINGS, tr(L"\u2699\uFE0F \u8BBE\u7F6E\u2026", L"\u2699\uFE0F Settings..."));
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    if (!app.availableUpdateVersion.empty()) {
-        std::wstring upTxt = app.isUpdating
-            ? (std::wstring(tr(L"\u23F3 \u6B63\u5728\u4E0B\u8F7D\u66F4\u65B0 ", L"\u23F3 Downloading update ")) + app.availableUpdateVersion + L"...")
-            : (std::wstring(tr(L"\U0001F195 \u53D1\u73B0\u65B0\u7248\u672C ", L"\U0001F195 Update Available ")) + app.availableUpdateVersion);
-        AppendMenuW(menu, MF_STRING | (app.isUpdating ? MF_GRAYED : 0), CMD_OPEN_UPDATE, upTxt.c_str());
-    } else if (app.isManualUpdateCheck) {
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, CMD_CHECK_UPDATE,
-            tr(L"\u23F3 \u6B63\u5728\u68C0\u67E5\u66F4\u65B0...", L"\u23F3 Checking for Updates..."));
-    } else {
-        std::wstring chkTxt = std::wstring(tr(L"\u68C0\u67E5\u66F4\u65B0 (\u5F53\u524D v", L"Check for Updates (v")) + APP_VERSION + L")";
-        AppendMenuW(menu, MF_STRING, CMD_CHECK_UPDATE, chkTxt.c_str());
+    // [改版] 自更新已关闭：只显示版本号，避免官方新版覆盖圣诞树版
+    {
+        std::wstring verTxt = std::wstring(tr(L"\u5723\u8BDE\u6811\u7248 v", L"Tree Edition v")) + APP_VERSION
+                            + tr(L"\uFF08\u5DF2\u7981\u7528\u81EA\u52A8\u66F4\u65B0\uFF09", L" (auto-update disabled)");
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, CMD_CHECK_UPDATE, verTxt.c_str());
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_QUIT, tr(L"\u9000\u51FA KuroCat", L"Quit KuroCat"));
@@ -3308,9 +3480,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
 
     switch (cmd) {
         case CMD_TOGGLE_VISIBLE:
-            app.isVisible = !app.isVisible;
-            app.hiddenByFullscreen = false;
-            ShowWindow(app.hwnd, app.isVisible ? SW_SHOWNOACTIVATE : SW_HIDE);
+            setPetVisible(app, !app.isVisible, true);
             break;
         case CMD_TOGGLE_CLICKTHROUGH:
             app.settings.fullClickThrough = !app.settings.fullClickThrough;
@@ -3401,10 +3571,12 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_LANG_ZH:
             app.settings.isEnglish = false;
             app.settings.saveToRegistry();
+            updateTrayTip(app);
             break;
         case CMD_LANG_EN:
             app.settings.isEnglish = true;
             app.settings.saveToRegistry();
+            updateTrayTip(app);
             break;
         case CMD_TABLET_AUTO:
             app.settings.tabletMode = 0;
@@ -3440,6 +3612,19 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_OPEN_KB_DIR:
             KeyboardSkinLibrary::ensureDir();
             ShellExecuteW(nullptr, L"open", KeyboardSkinLibrary::directory().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        case CMD_TREE_CLASSIC:
+        case CMD_TREE_SNOW:
+        case CMD_TREE_ROSE:
+        case CMD_TREE_NEON:
+            app.settings.overrideSkinIris = false;
+            app.settings.customSkin.clear();
+            app.settings.treeTheme = cmd == CMD_TREE_CLASSIC ? TreeTheme::ClassicGreen
+                                   : cmd == CMD_TREE_SNOW    ? TreeTheme::SnowBlue
+                                   : cmd == CMD_TREE_ROSE    ? TreeTheme::RoseGold
+                                                             : TreeTheme::MidnightNeon;
+            app.settings.saveToRegistry();
+            refreshSettingsWindow(app);
             break;
         case CMD_COAT_BLACK:
             app.settings.overrideSkinIris = false;
@@ -3515,9 +3700,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
             applyWindowScaleAndPosition(app, false);
             break;
         case CMD_CHECK_UPDATE:
-            if (app.menuOwnerHwnd && !app.isManualUpdateCheck) {
-                app.isManualUpdateCheck = startAsyncUpdateCheck(app.menuOwnerHwnd, true, 0);
-            }
+            // [改版] 已禁用更新检查，避免官方版本覆盖圣诞树版
             break;
         case CMD_OPEN_UPDATE: {
             startInAppUpdate(app);
@@ -3659,27 +3842,28 @@ void tickAndRender(AppState& app) {
                 Pt cp = CatRenderer::canvasPointToCatSpace(rawCp, app.settings.flipHorizontal, app.settings.rotationDeg);
                 CatHitZone zone = CatRenderer::hitTest(cp, app.physics, activeSkin(app));
                 app.physics.updateTailHover(&cp);
-                if (zone == CatHitZone::Head) {
-                    bool skipPetForHunt = ((curSkin.renderStyle == SkinRenderStyle::Douni || curSkin.renderStyle == SkinRenderStyle::Beagle) && app.physics.huntIntensity.value > 0.20f);
-                    if (!skipPetForHunt && app.hasLastHover) {
-                        float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
-                        if (d > 1.2f && d < 80.0f) {
-                            app.physics.registerPetStroke(cp, d, true, app.settings);
-                            if (app.physics.totalPetSessions != app.lastSavedPetSessions) {
-                                app.lastSavedPetSessions = app.physics.totalPetSessions;
-                                app.audioThreadStop.store(true, std::memory_order_relaxed);
-    app.audioThreadCv.notify_all();
-    if (app.audioThread.joinable()) app.audioThread.join();
-
-    CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
-                            }
-                        }
-                    }
-                    app.lastHoverCanvas = cp;
-                    app.hasLastHover = true;
-                } else {
-                    app.hasLastHover = false;
-                }
+                app.hasLastHover = false;
+                // ------------------------------------------------------------------
+                // 猫咪专属：摸头/摸背互动（圣诞树版暂时停用，代码保留，切回猫咪皮肤时恢复）
+                // if (zone == CatHitZone::Head) {
+                //     bool skipPetForHunt = ((curSkin.renderStyle == SkinRenderStyle::Douni || curSkin.renderStyle == SkinRenderStyle::Beagle) && app.physics.huntIntensity.value > 0.20f);
+                //     if (!skipPetForHunt && app.hasLastHover) {
+                //         float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
+                //         if (d > 1.2f && d < 80.0f) {
+                //             app.physics.registerPetStroke(cp, d, true, app.settings);
+                //             if (app.physics.totalPetSessions != app.lastSavedPetSessions) {
+                //                 app.lastSavedPetSessions = app.physics.totalPetSessions;
+                //                 CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+                //             }
+                //         }
+                //     }
+                //     app.lastHoverCanvas = cp;
+                //     app.hasLastHover = true;
+                // } else {
+                //     app.hasLastHover = false;
+                // }
+                (void)zone;
+                // ------------------------------------------------------------------
                 // Holding Alt temporarily unlocks click-through so user can ALWAYS right-click or drag the cat!
                 // In Green Screen mode (non-layered window), keep WS_EX_TRANSPARENT off unless fullClickThrough is active,
                 // so window capture tools never skip or misread the solid green-screen window.
@@ -3743,9 +3927,11 @@ void tickAndRender(AppState& app) {
     curPose.activeKeyHash = kh;
     curPose.totalKeystrokesToday = app.input.totalKeystrokesToday;
     curPose.totalPetSessions = app.physics.totalPetSessions;
-    curPose.headY10 = (int)std::lround(app.physics.headOffsetY.value * 10.0f);
+    curPose.headX10 = (int)std::lround(app.physics.bodyShiftX.value * 10.0f + app.physics.headYaw.value * 20.0f);
+    curPose.headY10 = (int)std::lround(app.physics.headOffsetY.value * 10.0f + app.physics.headPitch.value * 20.0f);
     curPose.leftPawY10 = (int)std::lround(app.physics.leftPaw.y.value * 10.0f);
     curPose.rightPawY10 = (int)std::lround(app.physics.rightPaw.y.value * 10.0f);
+    curPose.thirdPawY10 = (int)std::lround(app.physics.hindFoot.y.value * 10.0f);
     curPose.breath100 = (int)std::lround(app.physics.breathingOffset() * 100.0f);
     curPose.blink100 = (int)std::lround(app.physics.blinkProgress() * 100.0f);
     curPose.sleep100 = (int)std::lround(app.physics.sleepiness * 100.0f);
@@ -3753,6 +3939,11 @@ void tickAndRender(AppState& app) {
     curPose.purr100 = (int)std::lround(app.physics.petHeadIntensity * 100.0f);
     curPose.happy100 = (int)std::lround(app.physics.petBodyIntensity * 100.0f);
     curPose.sparkleCount = (int)app.physics.sparkles.size();
+    curPose.giftCount = (int)app.physics.gifts.size();
+    curPose.treePhase20 = (int)std::lround(std::fmod(app.physics.time, 1.0f) * 20.0f);
+    curPose.music100 = (int)std::lround(app.physics.musicIntensity * 100.0f);
+    curPose.musicPhase20 = (app.physics.musicIntensity > 0.01f) ? (int)std::lround(app.physics.musicPhase * 20.0f) : 0;
+    curPose.marquee20 = app.settings.keyboardMarquee ? (int)std::lround(app.physics.marqueePhase * 20.0f) : 0;
 
     if (!app.forceRedraw && curPose == app.lastRenderedPose) {
         return;
@@ -3813,6 +4004,7 @@ double desiredFrameInterval(const AppState& app, double now) {
                   app.physics.petHeadIntensity > 0.05f ||
                   app.physics.petBodyIntensity > 0.05f;
     if (active) return FRAME_INTERVAL; // 60 Hz when active
+    if (app.physics.musicIntensity > 0.01f || app.physics.isMusicPlaying) return 0.05; // 20 Hz for smooth headphones & rhythm
     if (app.physics.sleepiness > 0.5f) return 0.10; // 10 Hz when sleeping
     return 0.05; // 20 Hz when idle awake
 }
@@ -3983,6 +4175,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                 }
                 app->isDragging = true;
+                app->dragMouseButton = 1;
                 app->dragStartCursor = cur;
                 app->dragStartWinOrigin = { wr.left, wr.top };
                 app->physics.setDragging(app->settings.enableDragAnimation, 0.0f);
@@ -4035,7 +4228,43 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetWindowPos(hwnd, nullptr, nx, ny, nw, nh, SWP_NOZORDER | SWP_NOACTIVATE);
                 return 0;
             }
+            // When Windows mouse buttons are swapped (SM_SWAPBUTTON), also allow dragging via the
+            // secondary button (physical left) once moved past the drag threshold, while preserving
+            // normal click-to-open-menu when released without dragging.
+            if (app && hwnd == app->hwnd && app->rButtonDown && !app->isDragging && GetSystemMetrics(SM_SWAPBUTTON) != 0) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                int threshX = std::max(5, GetSystemMetrics(SM_CXDRAG));
+                int threshY = std::max(5, GetSystemMetrics(SM_CYDRAG));
+                if (std::abs(cur.x - app->rButtonDownCursor.x) >= threshX ||
+                    std::abs(cur.y - app->rButtonDownCursor.y) >= threshY) {
+                    RECT wr = {};
+                    GetWindowRect(hwnd, &wr);
+                    app->rButtonDown = false;
+                    app->isDragging = true;
+                    app->dragMouseButton = 2;
+                    app->dragStartCursor = app->rButtonDownCursor;
+                    app->dragStartWinOrigin = { wr.left, wr.top };
+                    app->physics.setDragging(app->settings.enableDragAnimation, 0.0f);
+                }
+            }
             if (app && app->isDragging) {
+                bool activeBtnDown = (app->dragMouseButton == 2)
+                    ? ((wParam & MK_RBUTTON) != 0)
+                    : ((wParam & MK_LBUTTON) != 0);
+                if (!activeBtnDown) {
+                    app->isDragging = false;
+                    app->dragMouseButton = 0;
+                    app->physics.setDragging(false);
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                    RECT wr = {};
+                    GetWindowRect(hwnd, &wr);
+                    app->settings.posX = wr.left;
+                    app->settings.posY = wr.top;
+                    app->settings.saveToRegistry();
+                    refreshSettingsWindow(*app);
+                    return 0;
+                }
                 POINT cur = {};
                 GetCursorPos(&cur);
                 RECT wr = {};
@@ -4054,6 +4283,25 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_LBUTTONUP:
+            // 圣诞树版：单击树（几乎没有移动）→ 从点击处弹出一圈星星
+            if (app && hwnd == app->hwnd && app->isDragging && app->dragMouseButton == 1) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                float dx = (float)(cur.x - app->dragStartCursor.x);
+                float dy = (float)(cur.y - app->dragStartCursor.y);
+                if (std::hypot(dx, dy) < 4.0f) {
+                    RECT wr = {};
+                    GetWindowRect(hwnd, &wr);
+                    int w = std::max(1, (int)(wr.right - wr.left));
+                    int h = std::max(1, (int)(wr.bottom - wr.top));
+                    Pt rawCp = {
+                        (float)(cur.x - wr.left) / (float)w * CatPhysics::CanvasWidth,
+                        (float)(cur.y - wr.top) / (float)h * CatPhysics::CanvasHeight
+                    };
+                    Pt cp = CatRenderer::canvasPointToCatSpace(rawCp, app->settings.flipHorizontal, app->settings.rotationDeg);
+                    if (TreeRenderer::hitTest(cp)) app->physics.treeOnTap(cp);
+                }
+            }
             if (app && app->isRotating) {
                 app->isRotating = false;
                 ReleaseCapture();
@@ -4075,10 +4323,11 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 refreshSettingsWindow(*app);
                 return 0;
             }
-            if (app && app->isDragging) {
+            if (app && app->isDragging && app->dragMouseButton != 2) {
                 app->isDragging = false;
+                app->dragMouseButton = 0;
                 app->physics.setDragging(false);
-                ReleaseCapture();
+                if (GetCapture() == hwnd) ReleaseCapture();
                 RECT wr = {};
                 GetWindowRect(hwnd, &wr);
                 app->settings.posX = wr.left;
@@ -4111,25 +4360,41 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
                 if (!app->settings.fullClickThrough || altHeld) {
                     app->rButtonDown = true;
+                    GetCursorPos(&app->rButtonDownCursor);
                     SetCapture(hwnd);
                 }
             }
             return 0;
 
         case WM_RBUTTONUP:
-            if (app && hwnd == app->hwnd && app->rButtonDown) {
-                app->rButtonDown = false;
-                if (GetCapture() == hwnd) ReleaseCapture();
-                POINT pt = {};
-                GetCursorPos(&pt);
-                if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) {
-                    // Defer opening the popup menu until shortly after Alt is released so Windows'
-                    // WM_SYSKEYUP/SC_KEYMENU finishes cleanly before TrackPopupMenu enters its modal loop.
-                    app->pendingMenuAfterAlt = true;
-                    app->pendingMenuAltUpTime = 0.0;
-                    app->pendingMenuPt = pt;
-                } else {
-                    showContextMenu(*app, pt);
+            if (app && hwnd == app->hwnd) {
+                if (app->isDragging && app->dragMouseButton == 2) {
+                    app->isDragging = false;
+                    app->dragMouseButton = 0;
+                    app->physics.setDragging(false);
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                    RECT wr = {};
+                    GetWindowRect(hwnd, &wr);
+                    app->settings.posX = wr.left;
+                    app->settings.posY = wr.top;
+                    app->settings.saveToRegistry();
+                    refreshSettingsWindow(*app);
+                    return 0;
+                }
+                if (app->rButtonDown) {
+                    app->rButtonDown = false;
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                    POINT pt = {};
+                    GetCursorPos(&pt);
+                    if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) {
+                        // Defer opening the popup menu until shortly after Alt is released so Windows'
+                        // WM_SYSKEYUP/SC_KEYMENU finishes cleanly before TrackPopupMenu enters its modal loop.
+                        app->pendingMenuAfterAlt = true;
+                        app->pendingMenuAltUpTime = 0.0;
+                        app->pendingMenuPt = pt;
+                    } else {
+                        showContextMenu(*app, pt);
+                    }
                 }
             }
             return 0;
@@ -4142,6 +4407,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CAPTURECHANGED:
             if (app && hwnd == app->hwnd) {
                 app->rButtonDown = false;
+                app->dragMouseButton = 0;
                 if (app->isDragging) {
                     app->isDragging = false;
                     app->physics.setDragging(false);
@@ -4150,7 +4416,11 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_TRAYICON:
-            if (app && (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP || lParam == WM_CONTEXTMENU)) {
+            if (app && lParam == WM_LBUTTONDBLCLK) {
+                if (!app->isVisible || app->hiddenByFullscreen) {
+                    setPetVisible(*app, true);
+                }
+            } else if (app && (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP || lParam == WM_CONTEXTMENU)) {
                 POINT pt = {};
                 GetCursorPos(&pt);
                 showContextMenu(*app, pt);
@@ -4180,9 +4450,8 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     app->settings.fullClickThrough = false;
                     app->settings.saveToRegistry();
                 }
-                if (!app->isVisible) {
-                    app->isVisible = true;
-                    ShowWindow(app->hwnd, SW_SHOWNOACTIVATE);
+                if (!app->isVisible || app->hiddenByFullscreen) {
+                    setPetVisible(*app, true);
                 }
                 POINT pt = {};
                 GetCursorPos(&pt);
@@ -4261,6 +4530,10 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             else DragFinish((HDROP)wParam);
             return 0;
 
+        case WM_CLOSE:
+            if (app && hwnd == app->menuOwnerHwnd) return 0;
+            break;
+
         case WM_DESTROY:
             if (hwnd == (app ? app->hwnd : nullptr)) {
                 KillTimer(hwnd, TIMER_RENDER);
@@ -4273,14 +4546,16 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         UnhookWinEvent(app->foregroundHook);
                         app->foregroundHook = nullptr;
                     }
+                    // Delete tray icon while menuOwnerHwnd (nid.hWnd) is still a valid window!
+                    Shell_NotifyIconW(NIM_DELETE, &app->nid);
+                    app->nid.hWnd = nullptr;
+                    if (app->trayIcon) { DestroyIcon(app->trayIcon); app->trayIcon = nullptr; }
                     if (app->menuOwnerHwnd) {
                         UnregisterHotKey(app->menuOwnerHwnd, HOTKEY_CLICKTHROUGH_ID);
                         RemovePropW(app->menuOwnerHwnd, VERSION_PROP);
                         DestroyWindow(app->menuOwnerHwnd);
                         app->menuOwnerHwnd = nullptr;
                     }
-                    Shell_NotifyIconW(NIM_DELETE, &app->nid);
-                    if (app->trayIcon) DestroyIcon(app->trayIcon);
                     if (app->dressingRoom) DestroyWindow(app->dressingRoom);
                     if (app->updateWnd && IsWindow(app->updateWnd)) {
                         app->replacingUpdateWnd = true;
@@ -4463,18 +4738,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     app.skins.reload();
     app.kbLibrary.reload();
     app.isElevated = isCurrentProcessElevated();
+    // 圣诞树版：默认进入圣诞树模式（猫咪专属动作全部跳过，代码保留）
+    app.physics.setTreeMode(true);
 
     // "Always run as administrator": hand over to an elevated copy (one UAC prompt). If the user
     // declines, simply carry on non-elevated.
     if (app.settings.runAsAdmin && !app.isElevated && !noElevate) {
         if (hMutex) { CloseHandle(hMutex); hMutex = nullptr; }
         if (relaunchSelfElevated(L"--takeover --no-elevate")) {
-            app.audioThreadStop.store(true, std::memory_order_relaxed);
-    app.audioThreadCv.notify_all();
-    if (app.audioThread.joinable()) app.audioThread.join();
-
-    CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
-    g_app = nullptr;
+            CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+            g_app = nullptr;
             return 0;
         }
         hMutex = CreateMutexW(nullptr, FALSE, kMutexName);
@@ -4498,21 +4771,20 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (today != app.statsDay) {
             app.statsDay = today;
             app.input.totalKeystrokesToday = 1;
-            app.audioThreadStop.store(true, std::memory_order_relaxed);
-    app.audioThreadCv.notify_all();
-    if (app.audioThread.joinable()) app.audioThread.join();
-
-    CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+            CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
         } else if (app.input.totalKeystrokesToday % 10 == 0) {
-            app.audioThreadStop.store(true, std::memory_order_relaxed);
-    app.audioThreadCv.notify_all();
-    if (app.audioThread.joinable()) app.audioThread.join();
-
-    CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+            CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
         }
-        app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle == SkinTypingStyle::Douni, &app.input.activeKeys);
+        // 圣诞树模式：打字 → 树回弹 + 弹星 + 随机礼物 + 连打触发喷泉
+        if (app.physics.treeMode()) {
+            app.physics.treeOnKey(app.settings);
+        } else {
+            app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle == SkinTypingStyle::Douni, &app.input.activeKeys);
+        }
     };
     app.input.onMouseClick = [&](int btn, bool down) {
+        // 圣诞树版：鼠标点击不驱动猫咪爪/耳动作（猫专属动作暂时停用，代码保留在 CatPhysics 里）
+        if (app.physics.treeMode()) return;
         app.physics.triggerMouseClick(btn, down, app.settings, activeSkin(app).renderStyle == SkinRenderStyle::Douni || activeSkin(app).renderStyle == SkinRenderStyle::Beagle);
     };
 
@@ -4601,7 +4873,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Global shortcut Ctrl+Alt+Shift+P to toggle full click-through anytime!
     if (app.menuOwnerHwnd) {
         RegisterHotKey(app.menuOwnerHwnd, HOTKEY_CLICKTHROUGH_ID, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'P');
-        startAsyncUpdateCheck(app.menuOwnerHwnd, false, 2500);
+        // [改版] 已禁用官方自更新检查：避免官方新版本覆盖圣诞树改版
+        // startAsyncUpdateCheck(app.menuOwnerHwnd, false, 2500);
     }
 
     ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
@@ -4614,18 +4887,28 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     app.audioThread = std::thread([&app]() {
         HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         double sustainedSince = 0.0;
+        double lastPlayingSeen = 0.0;
         while (!app.audioThreadStop.load(std::memory_order_relaxed)) {
             if (app.audioPollingEnabled.load(std::memory_order_relaxed)) {
                 double t = nowSeconds();
                 if (isSystemAudioPlaying()) {
                     if (sustainedSince == 0.0) sustainedSince = t;
-                    app.audioSustainedPlaying.store((t - sustainedSince) >= 1.2, std::memory_order_relaxed);
+                    lastPlayingSeen = t;
+                    if ((t - sustainedSince) >= 1.2) {
+                        app.audioSustainedPlaying.store(true, std::memory_order_relaxed);
+                    }
                 } else {
-                    sustainedSince = 0.0;
-                    app.audioSustainedPlaying.store(false, std::memory_order_relaxed);
+                    bool wasPlaying = app.audioSustainedPlaying.load(std::memory_order_relaxed);
+                    if (wasPlaying && (t - lastPlayingSeen) < 1.8) {
+                        // Brief pause/silence tolerance (< 1.8s) so headphones don't flicker between tracks or speech pauses.
+                    } else {
+                        sustainedSince = 0.0;
+                        app.audioSustainedPlaying.store(false, std::memory_order_relaxed);
+                    }
                 }
             } else {
                 sustainedSince = 0.0;
+                lastPlayingSeen = 0.0;
                 app.audioSustainedPlaying.store(false, std::memory_order_relaxed);
             }
             std::unique_lock<std::mutex> lk(app.audioThreadMu);
