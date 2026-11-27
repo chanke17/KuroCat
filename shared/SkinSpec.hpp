@@ -1,6 +1,8 @@
 // KuroCat skin model + strict `.kurocat` (formatVersion 1) parser, shared by Windows and Linux.
 // The format is documented in docs/skin-format.md; Sources/SkinSpec.swift mirrors this file for macOS.
 // Header-only, C++17, no third-party dependencies, locale-independent number parsing.
+// 原项目：KuroCat — Copyright (c) 2026 chanke17, MIT License
+// 新增/修改部分（renderStyle "tree"）：Copyright (c) 2026 Allen Mai, MIT License
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -29,7 +31,8 @@ enum class SkinSpace : int { Head = 0, Skull, Body, Tail, LeftEar, RightEar, Lef
 enum class SkinBuild : int { Standard = 0, Sleek };
 enum class SkinHeadSurface : int { Dome = 0, Plane };
 enum class SkinAnchorPoint : int { HeadTop = 0, Face, Neck, TailTip };
-enum class SkinRenderStyle : int { Standard = 0, Douni, Dazed, Beagle };
+// Tree：圣诞树角色（KuroCat 圣诞树版新增，Copyright (c) 2026 Allen Mai, MIT）
+enum class SkinRenderStyle : int { Standard = 0, Douni, Dazed, Beagle, Tree };
 enum class SkinTypingStyle : int { Standard = 0, Douni };
 
 struct SkinPoint { float x = 0, y = 0; };
@@ -577,6 +580,7 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
         if (rs->s == "douni") s.renderStyle = SkinRenderStyle::Douni;
         else if (rs->s == "dazed") s.renderStyle = SkinRenderStyle::Dazed;
         else if (rs->s == "beagle") s.renderStyle = SkinRenderStyle::Beagle;
+        else if (rs->s == "tree") s.renderStyle = SkinRenderStyle::Tree;
     }
     if (const Value* ts = root.get("typingStyle"); ts && ts->type == Value::JString) {
         if (ts->s == "douni") s.typingStyle = SkinTypingStyle::Douni;

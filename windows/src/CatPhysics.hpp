@@ -1,5 +1,8 @@
 #pragma once
 #define NOMINMAX
+// KuroCat 圣诞树版（Christmas Tree edition）
+// 原项目：KuroCat — Copyright (c) 2026 chanke17, MIT License
+// 新增/修改部分：Copyright (c) 2026 Allen Mai, MIT License（沿用原仓库协议）
 #include <windows.h>
 #include <cmath>
 #include <string>
@@ -35,6 +38,14 @@ enum class EyeColorTheme : int {
     OliveGold = 6
 };
 
+// 圣诞树配色预设（用户新增）。与猫咪皮肤一样通过菜单/设置切换。
+enum class TreeTheme : int {
+    ClassicGreen = 0,   // 经典圣诞绿
+    SnowBlue = 1,       // 雪夜蓝
+    RoseGold = 2,       // 粉金铃铛
+    MidnightNeon = 3    // 暗夜霓虹
+};
+
 struct CatSettings {
     bool showKeyBadges = true;
     bool showMouseBadges = true;
@@ -62,6 +73,9 @@ struct CatSettings {
     bool runAsAdmin = false; // relaunch elevated so keys typed into admin-level apps/games are visible (UIPI)
     float scale = 1.0f;
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
+    // 圣诞树配色（新增）；猫咪皮肤仍保留在 coatTheme 里，useTree 决定当前使用哪个角色
+    TreeTheme treeTheme = TreeTheme::ClassicGreen;
+    bool useTree = false;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
     EyeColorTheme eyeTheme = EyeColorTheme::NeonChartreuse;
     bool overrideSkinIris = false;
@@ -111,6 +125,8 @@ struct CatSettings {
         runAsAdmin       = readDword(L"RunAsAdmin", 0) != 0;
         scale            = std::clamp((float)readDword(L"ScalePct", 100) / 100.0f, 0.45f, 2.50f);
         coatTheme        = (CatCoatTheme)std::clamp((int)readDword(L"CoatTheme", 0), 0, static_cast<int>(CatCoatTheme::Tabby));
+        treeTheme        = (TreeTheme)std::clamp((int)readDword(L"TreeTheme", 0), 0, 3);
+        useTree          = readDword(L"UseTree", 0) != 0;
         keyboardTheme    = (KeyboardTheme)std::clamp((int)readDword(L"KeyboardTheme", 0), 0, 2);
         eyeTheme         = (EyeColorTheme)std::clamp((int)readDword(L"EyeTheme", 0), 0, (int)EyeColorTheme::OliveGold);
         overrideSkinIris = readDword(L"OverrideSkinIris", 0) != 0;
@@ -191,6 +207,8 @@ struct CatSettings {
         writeDword(L"RunAsAdmin", runAsAdmin ? 1 : 0);
         writeDword(L"ScalePct", (DWORD)(scale * 100.0f + 0.5f));
         writeDword(L"CoatTheme", (DWORD)coatTheme);
+        writeDword(L"TreeTheme", (DWORD)treeTheme);
+        writeDword(L"UseTree", useTree ? 1 : 0);
         writeDword(L"KeyboardTheme", (DWORD)keyboardTheme);
         writeDword(L"EyeTheme", (DWORD)eyeTheme);
         writeDword(L"OverrideSkinIris", overrideSkinIris ? 1 : 0);
@@ -310,6 +328,18 @@ struct PurrSparkle {
     float age = 0.0f;
     float lifetime = 0.9f;
     bool isSleepZ = false;
+};
+
+// 圣诞树版：随机跳出的礼物粒子（0 礼物盒 / 1 手机 / 2 游戏机 / 3 笔记本电脑）
+struct GiftParticle {
+    Pt position;
+    Pt velocity;
+    float rotation = 0.0f;
+    float spin = 0.0f;
+    float age = 0.0f;
+    float lifetime = 1.7f;
+    float scale = 1.0f;
+    int kind = 0;
 };
 
 class CatPhysics {
@@ -438,6 +468,88 @@ public:
     std::unordered_map<PhysicalKey, float> keyGlow;
     std::vector<FloatingKeycap> floatingKeycaps;
     std::vector<PurrSparkle> sparkles;
+
+    // ---------------------------------------------------------------- 圣诞树状态（用户新增）
+    // 树不需要猫咪的弹簧/爪/耳/尾，只保留：打字闪光、回弹、摇摆、星星、礼物、喷泉计时。
+    std::vector<GiftParticle> gifts;
+    Spring1D treeFlash{0.0f};
+    Spring1D treeSquash{1.0f};
+    Spring1D treeLean{0.0f};
+    float treeFountainTime = 0.0f;
+    float treeFountainCooldown = 0.0f;
+    float treeSparkAccum = 0.0f;
+    float treeGiftCooldown = 0.0f;
+
+    void setTreeMode(bool on) { treeMode_ = on; }
+    bool treeMode() const { return treeMode_; }
+
+    // 按一次键：树回弹 + 弹一颗星；小概率掉礼物；短时间连打触发喷泉
+    void treeOnKey(const CatSettings& settings) {
+        (void)settings;
+        treeFlash.velocity += 9.0f;
+        treeSquash.velocity -= 1.5f;
+        treeLean.velocity += randRange(-1.4f, 1.4f);
+        spawnTreeStar(treeCrownPoint(randRange(0.05f, 0.98f)), 1.0f);
+        if (treeGiftCooldown <= 0.0f && randRange(0.0f, 1.0f) < 0.09f) {
+            treeGiftCooldown = 0.32f;
+            spawnTreeGift(treeCrownPoint(randRange(0.15f, 0.92f)));
+        }
+        // 连打计数：1.25 秒内 ≥ 14 次按键 → 喷泉
+        double now = nowSeconds();
+        treeKeyStamps_[treeKeyCursor_] = now;
+        treeKeyCursor_ = (treeKeyCursor_ + 1) % 24;
+        int rapid = 0;
+        for (double t : treeKeyStamps_) if (t > 0.0 && now - t <= 1.25) ++rapid;
+        if (rapid >= 14 && treeFountainCooldown <= 0.0f) {
+            treeFountainTime = 1.0f;
+            treeFountainCooldown = 4.5f;
+            treeSquash.velocity -= 2.2f;
+        }
+    }
+
+    // 点一下树：向上扇形喷出一圈星星（只向上，不往下掉）
+    void treeOnTap(Pt at) {
+        treeFlash.velocity += 12.0f;
+        treeSquash.velocity -= 2.0f;
+        for (int i = 0; i < 8; ++i) {
+            float a = randRange(-2.62f, -0.52f);           // 约 -150° ~ -30°，向上半圆
+            float sp = randRange(88.0f, 156.0f);
+            sparkles.push_back({ { at.x + randRange(-6.0f, 6.0f), at.y + randRange(-5.0f, 5.0f) },
+                                 { std::cos(a) * sp, std::sin(a) * sp }, 0.0f, randRange(0.6f, 1.0f), false });
+        }
+        trimParticles();
+    }
+
+    // 树冠上的随机取点（用于星星/礼物出生位置），几何与 TreeRenderer 的五层枝条一致
+    Pt treeCrownPoint(float u) const {
+        const float apex[5] = { 50.0f, 82.0f, 116.0f, 152.0f, 196.0f };
+        const float base[5] = { 102.0f, 138.0f, 176.0f, 218.0f, 266.0f };
+        const float halfW[5] = { 34.0f, 48.0f, 62.0f, 76.0f, 91.0f };
+        int tier = (int)randRange(0.0f, 4.999f);
+        float y = apex[tier] + (base[tier] - apex[tier]) * std::clamp(u, 0.0f, 1.0f);
+        float w = halfW[tier] * ((y - apex[tier]) / (base[tier] - apex[tier]));
+        return { 180.0f + randRange(-w * 0.85f, w * 0.85f), y };
+    }
+
+    void spawnTreeStar(Pt origin, float power = 1.0f) {
+        sparkles.push_back({ origin, { randRange(-24.0f, 24.0f), -randRange(58.0f, 96.0f) * power },
+                             0.0f, randRange(0.7f, 1.1f), false });
+        trimParticles();
+    }
+
+    void spawnTreeGift(Pt origin) {
+        gifts.push_back({ origin,
+                          { randRange(-62.0f, 62.0f), -randRange(105.0f, 165.0f) },
+                          randRange(-30.0f, 30.0f), randRange(-220.0f, 220.0f),
+                          0.0f, randRange(1.35f, 1.8f), randRange(0.72f, 1.0f),
+                          (int)randRange(0.0f, 3.999f) });
+        trimParticles();
+    }
+
+    void trimParticles() {
+        if (sparkles.size() > 220) sparkles.erase(sparkles.begin(), sparkles.begin() + (sparkles.size() - 220));
+        if (gifts.size() > 24) gifts.erase(gifts.begin(), gifts.begin() + (gifts.size() - 24));
+    }
 
     float time = 0.0f;
     float tailPhase = 0.0f;
@@ -714,6 +826,8 @@ public:
     void step(float rawDt, const RECT& windowRect, InputEngine& engine, const CatSettings& settings,
               bool douniTyping = false, bool douniSkin = false, bool isClassicBuiltIn = false, bool beagleSkin = false) {
         float dt = std::min(rawDt, 1.0f / 25.0f);
+        // [Tree edition] 圣诞树模式：跳过全部猫咪动作（摸头/拎后颈/躺倒/晕眩等代码原样保留，未删除）
+        if (treeMode_) { stepTree(dt); return; }
         time += dt;
         engine.pollMouse(dt);
 
@@ -1382,6 +1496,71 @@ public:
     }
 
 private:
+    // ---------------------------------------------------------------- 圣诞树逐帧更新（用户新增）
+    void stepTree(float dt) {
+        time += dt;
+        treeFlash.target = 0.0f;
+        treeFlash.step(dt, 120.0f, 14.0f);
+        treeSquash.target = 1.0f;
+        treeSquash.step(dt, 220.0f, 18.0f);
+        treeLean.target = 0.0f;
+        treeLean.step(dt, 150.0f, 13.0f);
+        treeGiftCooldown = std::max(0.0f, treeGiftCooldown - dt);
+        treeFountainCooldown = std::max(0.0f, treeFountainCooldown - dt);
+
+        // 喷泉：持续约 1 秒，从树顶大量喷出星星与礼物（放大 2 倍后降低发射频率，避免糊成一片）
+        if (treeFountainTime > 0.0f) {
+            treeFountainTime = std::max(0.0f, treeFountainTime - dt);
+            treeSparkAccum += dt;
+            while (treeSparkAccum >= 0.062f) {
+                treeSparkAccum -= 0.062f;
+                // 喷发点：树身中部，向四周斜上方喷出
+                Pt src = { 180.0f + randRange(-28.0f, 28.0f), 176.0f + randRange(-30.0f, 30.0f) };
+                float ang = randRange(-2.86f, -0.28f);       // 左上 ~ 右上
+                float spd = randRange(168.0f, 272.0f);
+                sparkles.push_back({ src, { std::cos(ang) * spd, std::sin(ang) * spd },
+                                     0.0f, randRange(0.85f, 1.15f), false });
+                if (randRange(0.0f, 1.0f) < 0.12f) {
+                    float gs = randRange(175.0f, 245.0f);
+                    gifts.push_back({ { src.x + randRange(-8.0f, 8.0f), src.y + randRange(-8.0f, 8.0f) },
+                                      { std::cos(ang) * gs, std::sin(ang) * gs },
+                                      randRange(-30.0f, 30.0f), randRange(-240.0f, 240.0f),
+                                      0.0f, randRange(1.4f, 1.8f), randRange(0.7f, 1.0f),
+                                      (int)randRange(0.0f, 3.999f) });
+                }
+            }
+        } else {
+            treeSparkAccum = 0.0f;
+        }
+
+        // 星星：持续向上飘（微浮力 + 侧向收束），到寿命就淡出，不再下坠
+        for (int i = (int)sparkles.size() - 1; i >= 0; --i) {
+            auto& sp = sparkles[i];
+            sp.age += dt;
+            sp.position.x += sp.velocity.x * dt;
+            sp.position.y += sp.velocity.y * dt;
+            sp.velocity.y -= 26.0f * dt;            // 轻微加速上浮
+            sp.velocity.x *= (1.0f - dt * 1.6f);    // 横向收束成细流
+            if (sp.age >= sp.lifetime) sparkles.erase(sparkles.begin() + i);
+        }
+        // 礼物：抛物线 + 自旋
+        for (int i = (int)gifts.size() - 1; i >= 0; --i) {
+            auto& gt = gifts[i];
+            gt.age += dt;
+            gt.position.x += gt.velocity.x * dt;
+            gt.position.y += gt.velocity.y * dt;
+            gt.velocity.y += 460.0f * dt;
+            gt.velocity.x *= (1.0f - dt * 0.35f);
+            gt.rotation += gt.spin * dt;
+            if (gt.age >= gt.lifetime || gt.position.y > 330.0f) gifts.erase(gifts.begin() + i);
+        }
+        trimParticles();
+    }
+
+    bool treeMode_ = false;
+    double treeKeyStamps_[24] = {};
+    int treeKeyCursor_ = 0;
+
     float nextBlinkTime_ = 3.2f;
     float blinkProgress_ = 0.0f;
     bool isBlinking_ = false;
