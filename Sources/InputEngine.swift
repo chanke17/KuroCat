@@ -4,6 +4,11 @@ import IOKit
 import IOKit.hid
 import ApplicationServices
 
+enum HardwareInputSource {
+    case builtIn
+    case external
+}
+
 enum InputEngineStatus: String {
     case fullHardware = "硬件级全状态监听中 (HID + EventTap)"
     case hidOnly = "硬件 HID 监听中 (游戏/打字全支持)"
@@ -42,6 +47,16 @@ final class InputEngine {
     private(set) var lastKeyActivityTime: CFTimeInterval = 0
     private(set) var lastMouseLocation: CGPoint = NSEvent.mouseLocation
     private(set) var mouseVelocity: CGVector = .zero
+    private(set) var activeKeyboardSource: HardwareInputSource = .builtIn
+    private(set) var activePointerSource: HardwareInputSource = .builtIn
+
+    func resetExternalKeyboardSourceIfNeeded() {
+        activeKeyboardSource = .builtIn
+    }
+
+    func resetExternalPointerSourceIfNeeded() {
+        activePointerSource = .builtIn
+    }
     private(set) var penPressure: CGFloat = 0.0
     private(set) var isPenInProximity = false
     private var tabletHardwareDevices = Set<UInt>()
@@ -556,6 +571,9 @@ final class InputEngine {
             // Filter out HID error/rollover pseudo-usages (0x00..0x03)
             guard usage >= 0x04 else { return }
             if let key = PhysicalKey.fromHIDUsage(usage) {
+                if intVal != 0 {
+                    updateKeyboardSource(from: IOHIDElementGetDevice(element))
+                }
                 setKeyState(key, isDown: intVal != 0, fromHID: true)
             }
             return
@@ -563,12 +581,24 @@ final class InputEngine {
 
         // Apple Built-in / Magic Keyboard Fn key (Apple Vendor Top Case page 0xFF, usage 0x03)
         if usagePage == 0xFF && usage == 0x03 {
+            if intVal != 0 {
+                updateKeyboardSource(from: IOHIDElementGetDevice(element))
+            }
             setKeyState(.fn, isDown: intVal != 0, fromHID: true)
+            return
+        }
+
+        if usagePage == UInt32(kHIDPage_GenericDesktop) &&
+            (usage == UInt32(kHIDUsage_GD_X) || usage == UInt32(kHIDUsage_GD_Y) || usage == UInt32(kHIDUsage_GD_Wheel)) {
+            if intVal != 0 {
+                updatePointerSource(from: IOHIDElementGetDevice(element))
+            }
             return
         }
 
         // Mouse buttons (Page 0x09)
         if usagePage == UInt32(kHIDPage_Button) {
+            updatePointerSource(from: IOHIDElementGetDevice(element))
             let isDown = intVal != 0
             if usage == 1 {
                 updateMouseButton(0, isDown: isDown)
@@ -755,9 +785,30 @@ final class InputEngine {
             updateMouseButton(2, isDown: false)
         case .scrollWheel:
             lastMouseMoveTime = CACurrentMediaTime()
+            if event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0 {
+                activePointerSource = .builtIn
+            }
         default:
             break
         }
+    }
+
+    private func isInternalHIDDevice(_ device: IOHIDDevice) -> Bool {
+        let builtIn = (IOHIDDeviceGetProperty(device, kIOHIDBuiltInKey as CFString) as? NSNumber)?.intValue ?? 0
+        let transport = (IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String) ?? ""
+        let product = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String) ?? ""
+        return builtIn != 0
+            || transport.caseInsensitiveCompare("FIFO") == .orderedSame
+            || transport.caseInsensitiveCompare("SPI") == .orderedSame
+            || product.localizedCaseInsensitiveContains("Apple Internal")
+    }
+
+    private func updateKeyboardSource(from device: IOHIDDevice) {
+        activeKeyboardSource = isInternalHIDDevice(device) ? .builtIn : .external
+    }
+
+    private func updatePointerSource(from device: IOHIDDevice) {
+        activePointerSource = isInternalHIDDevice(device) ? .builtIn : .external
     }
 
     private func isModifierKeyDown(key: PhysicalKey, flags: CGEventFlags) -> Bool {

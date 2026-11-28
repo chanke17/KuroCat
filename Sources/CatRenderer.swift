@@ -225,7 +225,7 @@ enum CatRenderer {
         let cx = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
         let breath = physics.breathingOffset
         let headLift: CGFloat = build(skin).headLift
-        let headCenter = CGPoint(x: cx + physics.bodyTilt.value * 42, y: 124 + headLift + physics.headOffsetY.value + breath)
+        let headCenter = CGPoint(x: cx + physics.bodyTilt.value * 42, y: 124 + headLift + physics.headOffsetY.value + physics.bodyShiftY.value + breath)
 
         // Head hit ellipse (strictly on the cat's head — never overlaps keyboard); follows head size + cheeks.
         let hdx = (p.x - headCenter.x) / (44.0 * shape.headScale * shape.cheekFullness)
@@ -236,7 +236,7 @@ enum CatRenderer {
 
         // Torso + keyboard area hit check (follows body width)
         let bdx = (p.x - cx) / (58.0 * shape.bodyWidth)
-        let bdy = (p.y - 196.0) / 56.0
+        let bdy = (p.y - (196.0 + physics.bodyShiftY.value)) / 56.0
         if bdx * bdx + bdy * bdy <= 1.0 {
             return .body
         }
@@ -252,6 +252,51 @@ enum CatRenderer {
 
     static func canSplitLayers(physics: CatPhysics, skin: SkinSpec) -> Bool {
         skin.renderStyle != .douni && skin.renderStyle != .beagle && physics.scruffDrag.value <= 0.005
+    }
+
+    /// Classic keyboard-skin desk unless the user opted into laptop mode and the open Mac is using its built-in deck.
+    /// Tablet mode keeps the drawing surface: a pen is not a trackpad.
+    private static func shouldDrawLaptop(physics: CatPhysics) -> Bool {
+        guard CatSettings.shared.deskSetupMode != .keyboardAndMouse else { return false }
+        guard !physics.isTabletActive else { return false }
+        return HardwareMonitor.shared.shouldShowLaptop
+    }
+
+    private static func drawDeskSurface(
+        in ctx: CGContext,
+        physics: CatPhysics,
+        kbSkin: KeyboardSkinSpec,
+        eyeTheme: EyeColorTheme,
+        keyboardTheme: KeyboardTheme,
+        showLegends: Bool,
+        flipped: Bool,
+        marquee: Bool
+    ) {
+        let scruff = max(0, min(1, physics.scruffDrag.value))
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        if shouldDrawLaptop(physics: physics) {
+            if HardwareMonitor.shared.shouldShowExternalMouse {
+                drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
+            }
+            drawLaptopCSide(
+                in: ctx,
+                physics: physics,
+                color: HardwareMonitor.shared.effectiveLaptopColor,
+                eyeTheme: eyeTheme
+            )
+            return
+        }
+        if physics.isTabletActive {
+            drawTablet(in: ctx, physics: physics, theme: keyboardTheme, eyeTheme: eyeTheme)
+            if !physics.leftPawOnMouse || scruff > 0.25 || dizzy > 0.35 || lie > 0.45 {
+                drawParkedStylus(in: ctx, theme: keyboardTheme, eyeTheme: eyeTheme)
+            }
+        } else {
+            drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
+        }
+        drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: eyeTheme,
+                     showLegends: showLegends, flipped: flipped, marquee: marquee)
     }
 
     /// Backdrop only (optional green screen + mouse/tablet + keyboard) for split-layer marquee caching.
@@ -272,19 +317,9 @@ enum CatRenderer {
             applyCanvasTransform(in: ctx, flipped: flipped, rotationDeg: rotationDeg)
         }
         let kbSkin = settings.activeKeyboardSkin
-        let scruff = max(0, min(1, physics.scruffDrag.value))
-        let lie = max(0, min(1, physics.lieIntensity.value))
-        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
-        if physics.isTabletActive {
-            drawTablet(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
-            if !physics.leftPawOnMouse || scruff > 0.25 || dizzy > 0.35 || lie > 0.45 {
-                drawParkedStylus(in: ctx, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
-            }
-        } else {
-            drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
-        }
-        drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme,
-                     showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
+        drawDeskSurface(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme,
+                        keyboardTheme: settings.keyboardTheme, showLegends: settings.showKeyLegends,
+                        flipped: flipped, marquee: settings.keyboardMarquee)
         ctx.restoreGState()
     }
 
@@ -306,6 +341,9 @@ enum CatRenderer {
                                   whiteOutline: settings.whiteOutline,
                                   flipped: flipped,
                                   overrideSkinIris: settings.overrideSkinIris)
+        if shouldDrawLaptop(physics: physics) {
+            drawLaptopTransparentLid(in: ctx, color: HardwareMonitor.shared.effectiveLaptopColor)
+        }
         ctx.restoreGState()
     }
 
@@ -365,8 +403,6 @@ enum CatRenderer {
         }
         let skin = settings.activeSkin
         let scruff = max(0, min(1, physics.scruffDrag.value))
-        let lie = max(0, min(1, physics.lieIntensity.value))
-        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
         let kbSkin = settings.activeKeyboardSkin
 
         if skin.renderStyle == .beagle {
@@ -438,24 +474,19 @@ enum CatRenderer {
             return
         }
 
-        // 1. Mini White Mouse OR Graphics Tablet (when drawing tablet/stylus is connected!)
-        if physics.isTabletActive {
-            drawTablet(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
-            if !physics.leftPawOnMouse || scruff > 0.25 || dizzy > 0.35 || lie > 0.45 {
-                drawParkedStylus(in: ctx, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
-            }
-        } else {
-            drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
-        }
-
-        // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
-        drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
+        // 1–2. Classic keyboard/mouse, tablet, or the Apple laptop C-side.
+        drawDeskSurface(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme,
+                        keyboardTheme: settings.keyboardTheme, showLegends: settings.showKeyLegends,
+                        flipped: flipped, marquee: settings.keyboardMarquee)
 
         drawStandardCatAndEffects(in: ctx, physics: physics, skin: skin,
                                   eyeTheme: settings.eyeTheme, keyboardTheme: settings.keyboardTheme,
                                   whiteOutline: settings.whiteOutline,
                                   flipped: flipped,
                                   overrideSkinIris: settings.overrideSkinIris)
+        if shouldDrawLaptop(physics: physics) {
+            drawLaptopTransparentLid(in: ctx, color: HardwareMonitor.shared.effectiveLaptopColor)
+        }
 
         if hasCanvasTransform {
             ctx.restoreGState()
@@ -488,7 +519,7 @@ enum CatRenderer {
         let dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0 - 2.0 * dizzyFallRaw)
         let preWobble = max(0, min(1, (dizzy - 0.12) / 0.38)) * (1.0 - dizzyFall)
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
-        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
+        let seatY = CatPhysics.seatAnchor.y + physics.bodyShiftY.value - scruff * 22.0 + lieS * 10.0
 
         // Rigid-body wobble (pre-dizzy) -> natural sideways collapse onto the keyboard (dizzy >= 0.5)
         let fallAngle: CGFloat = -dizzyFall * 1.46 + sin(physics.time * 9.5) * 0.16 * preWobble
@@ -735,7 +766,7 @@ enum CatRenderer {
         let scruff = max(0, min(1, physics.scruffDrag.value))
         return CGPoint(
             x: CatPhysics.seatAnchor.x + physics.bodyShiftX.value + physics.bodyTilt.value * 36 + physics.headYaw.value * KuroRig.headShiftPerYaw,
-            y: 126 + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + physics.breathingOffset * 1.1 - scruff * 22.0
+            y: 126 + headLift + physics.headOffsetY.value + physics.bodyShiftY.value + physics.headPitch.value * 4.8 + physics.breathingOffset * 1.1 - scruff * 22.0
         )
     }
 
@@ -1250,6 +1281,292 @@ enum CatRenderer {
     private static var marqueeCycleCache: (key: MarqueeCycleKey, bitmaps: [Int: KeyboardBitmap])?
     private static let marqueeStops: [CGFloat] = (0..<24).map { CGFloat($0) / 23.0 }
 
+
+    // MARK: - Apple Laptop Chassis (peripheral-aware MacBook mode)
+
+
+    private static func offsetY(_ pt: CGPoint, _ dy: CGFloat) -> CGPoint {
+        CGPoint(x: pt.x, y: pt.y + dy)
+    }
+
+    private static func drawLaptopCSide(
+        in ctx: CGContext,
+        physics: CatPhysics,
+        color: MacBookColor,
+        eyeTheme: EyeColorTheme
+    ) {
+        let pal = color.palette
+
+        // C-side unibody deck extends toward the cat (sv = -0.34) for palm rest & Force Touch trackpad,
+        // and slightly wider left/right for MacBook speaker grilles.
+        let tl = KeyboardLayout.screenQuadPoint(su: -0.09, sv: -0.34)
+        let tr = KeyboardLayout.screenQuadPoint(su: 1.09, sv: -0.34)
+        let bl = KeyboardLayout.screenQuadPoint(su: -0.10, sv: 1.09)
+        let br = KeyboardLayout.screenQuadPoint(su: 1.10, sv: 1.09)
+        let lipDepth: CGFloat = 5.0
+
+        // 1. Soft ambient desk shadow under laptop
+        ctx.saveGState()
+        let shadowPath = roundedQuadPath(
+            tl: offsetY(tl, lipDepth + 2.5),
+            tr: offsetY(tr, lipDepth + 2.5),
+            br: offsetY(br, lipDepth + 3.5),
+            bl: offsetY(bl, lipDepth + 3.5),
+            radius: 7.5
+        )
+        ctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.24).cgColor)
+        ctx.addPath(shadowPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 2. Machined aluminum lower 3D lip
+        let lowerPath = roundedQuadPath(
+            tl: offsetY(tl, lipDepth),
+            tr: offsetY(tr, lipDepth),
+            br: offsetY(br, lipDepth),
+            bl: offsetY(bl, lipDepth),
+            radius: 7.0
+        )
+        ctx.saveGState()
+        ctx.setFillColor(pal.chassisSide.cgColor)
+        ctx.addPath(lowerPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 3. Anodized aluminum C-side top surface with subtle metallic gradient
+        let deckPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 6.5)
+        ctx.saveGState()
+        ctx.addPath(deckPath)
+        ctx.clip()
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let gradColors = [pal.deckTop.cgColor, pal.deckBottom.cgColor] as CFArray
+        if let grad = CGGradient(colorsSpace: cs, colors: gradColors, locations: [0.0, 1.0]) {
+            ctx.drawLinearGradient(
+                grad,
+                start: CGPoint(x: (tl.x + tr.x) * 0.5, y: tl.y),
+                end: CGPoint(x: (bl.x + br.x) * 0.5, y: br.y),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        }
+        ctx.restoreGState()
+
+        // Crisp chamfered aluminum edge
+        ctx.saveGState()
+        ctx.setStrokeColor(pal.borderEdge.cgColor)
+        ctx.setLineWidth(1.1)
+        ctx.addPath(deckPath)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // 4. Force Touch Trackpad (centered closest to the cat!)
+        let tpTL = KeyboardLayout.screenQuadPoint(su: 0.28, sv: -0.29)
+        let tpTR = KeyboardLayout.screenQuadPoint(su: 0.72, sv: -0.29)
+        let tpBL = KeyboardLayout.screenQuadPoint(su: 0.275, sv: -0.05)
+        let tpBR = KeyboardLayout.screenQuadPoint(su: 0.725, sv: -0.05)
+        let tpPath = roundedQuadPath(tl: tpTL, tr: tpTR, br: tpBR, bl: tpBL, radius: 2.5)
+        ctx.saveGState()
+        let tpClick = max(physics.mousePressLeft.value, physics.mousePressRight.value)
+        var tpFill = pal.trackpadFill
+        if physics.leftPawOnTrackpad && tpClick > 0.04 {
+            tpFill = blendColor(tpFill, eyeTheme.glowColor, t: tpClick * 0.28)
+        }
+        ctx.setFillColor(tpFill.cgColor)
+        ctx.addPath(tpPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(pal.trackpadBorder.cgColor)
+        ctx.setLineWidth(0.85)
+        ctx.addPath(tpPath)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // 5. Left & Right MacBook speaker grilles flanking the keyboard well
+        ctx.saveGState()
+        ctx.setFillColor(pal.trackpadBorder.withAlphaComponent(0.45).cgColor)
+        for sideU in [-0.055, 1.055] as [CGFloat] {
+            for r in 0..<7 {
+                let sv = 0.06 + CGFloat(r) * 0.14
+                let pt = KeyboardLayout.screenQuadPoint(su: sideU, sv: sv)
+                ctx.fillEllipse(in: CGRect(x: pt.x - 1.0, y: pt.y - 0.8, width: 2.0, height: 1.6))
+            }
+        }
+        ctx.restoreGState()
+
+        // 6. Recessed black MacBook keyboard well
+        let wTL = KeyboardLayout.screenQuadPoint(su: -0.015, sv: -0.015)
+        let wTR = KeyboardLayout.screenQuadPoint(su: 1.015, sv: -0.015)
+        let wBL = KeyboardLayout.screenQuadPoint(su: -0.020, sv: 1.015)
+        let wBR = KeyboardLayout.screenQuadPoint(su: 1.020, sv: 1.015)
+        let wellPath = roundedQuadPath(tl: wTL, tr: wTR, br: wBR, bl: wBL, radius: 3.0)
+        ctx.saveGState()
+        ctx.setFillColor(pal.keyWell.cgColor)
+        ctx.addPath(wellPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 7. Flat black MacBook scissor-switch keycaps with subtle backlit glow when pressed
+        let padU: CGFloat = 0.0032
+        let padV: CGFloat = 0.016
+        let glowBaseColor = eyeTheme.glowColor
+
+        for cap in KeyboardLayout.keycaps {
+            let glow = physics.keyGlow[cap.key] ?? 0
+            let su0 = (1.0 - (cap.xUnits + cap.widthUnits)) + padU
+            let su1 = (1.0 - cap.xUnits) - padU
+            let sv0 = (1.0 - CGFloat(cap.row + 1) / 5.0) + padV
+            let sv1 = (1.0 - CGFloat(cap.row) / 5.0) - padV
+
+            let pressDy = glow * 1.1
+            let kTL = offsetY(KeyboardLayout.screenQuadPoint(su: su0, sv: sv0), pressDy)
+            let kTR = offsetY(KeyboardLayout.screenQuadPoint(su: su1, sv: sv0), pressDy)
+            let kBR = offsetY(KeyboardLayout.screenQuadPoint(su: su1, sv: sv1), pressDy)
+            let kBL = offsetY(KeyboardLayout.screenQuadPoint(su: su0, sv: sv1), pressDy)
+            let kPath = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.2)
+
+            var fill = pal.keycap
+            if glow > 0.02 {
+                fill = blendColor(fill, glowBaseColor, t: glow * 0.62)
+            }
+            ctx.setFillColor(fill.cgColor)
+            ctx.addPath(kPath)
+            ctx.fillPath()
+
+            ctx.setStrokeColor(pal.keycapBorder.cgColor)
+            ctx.setLineWidth(0.55)
+            ctx.addPath(kPath)
+            ctx.strokePath()
+        }
+
+        // Backlit keycap halo on active keys
+        for (key, glow) in physics.keyGlow where glow > 0.05 {
+            let center = KeyboardLayout.canvasPoint(for: key)
+            drawRadialGlow(
+                in: ctx,
+                center: center,
+                radius: 15.0 + glow * 5.0,
+                color: glowBaseColor.withAlphaComponent(0.32 * glow)
+            )
+        }
+
+        // 8. Dark clutch barrel hinge along the bottom edge (closest to viewer)
+        let hTL = KeyboardLayout.screenQuadPoint(su: 0.09, sv: 1.035)
+        let hTR = KeyboardLayout.screenQuadPoint(su: 0.91, sv: 1.035)
+        let hBL = KeyboardLayout.screenQuadPoint(su: 0.09, sv: 1.095)
+        let hBR = KeyboardLayout.screenQuadPoint(su: 0.91, sv: 1.095)
+        let hingePath = roundedQuadPath(tl: hTL, tr: hTR, br: hBR, bl: hBL, radius: 1.6)
+        ctx.saveGState()
+        ctx.setFillColor(pal.hingeColor.cgColor)
+        ctx.addPath(hingePath)
+        ctx.fillPath()
+        ctx.restoreGState()
+    }
+
+    // MARK: - Apple Laptop Transparent A & B Side (Open Display Lid)
+
+    /// Drawn translucently over the front hinge so the viewer sees the full open MacBook
+    /// (A-side aluminum silhouette + B-side bezel/notch) without obstructing any cat or paw movement!
+    private static func drawLaptopTransparentLid(in ctx: CGContext, color: MacBookColor) {
+        let pal = color.palette
+
+        // Bottom of lid attaches seamlessly to the C-side hinge edge
+        let bl = KeyboardLayout.screenQuadPoint(su: -0.095, sv: 1.08)
+        let br = KeyboardLayout.screenQuadPoint(su: 1.095, sv: 1.08)
+        // Top of lid rises in front of the keyboard/lower chest (below the cat's head/eyes!)
+        let lidHeight: CGFloat = 104.0
+        let tl = CGPoint(x: bl.x + 2.0, y: bl.y - lidHeight)
+        let tr = CGPoint(x: br.x - 2.0, y: br.y - lidHeight)
+
+        let lidPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 8.0)
+
+        ctx.saveGState()
+
+        // 1. Ultra-translucent tinted glass fill (keeps cat & paws 100% crisp underneath)
+        ctx.setFillColor(pal.lidTint.cgColor)
+        ctx.addPath(lidPath)
+        ctx.fillPath()
+
+        // 2. Subtle diagonal glass sheen reflection inside the transparent lid
+        ctx.saveGState()
+        ctx.addPath(lidPath)
+        ctx.clip()
+        let sheen = CGMutablePath()
+        sheen.move(to: CGPoint(x: tl.x + 26, y: tl.y - 6))
+        sheen.addLine(to: CGPoint(x: tl.x + 74, y: tl.y - 6))
+        sheen.addLine(to: CGPoint(x: bl.x + 24, y: bl.y + 6))
+        sheen.addLine(to: CGPoint(x: bl.x - 14, y: bl.y + 6))
+        sheen.closeSubpath()
+        ctx.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.065).cgColor)
+        ctx.addPath(sheen)
+        ctx.fillPath()
+
+        // Subtle B-side inner screen bezel outline + iconic MacBook notch silhouette at top center
+        let inset: CGFloat = 5.5
+        let bTL = CGPoint(x: tl.x + inset, y: tl.y + inset)
+        let bTR = CGPoint(x: tr.x - inset, y: tr.y + inset)
+        let bBR = CGPoint(x: br.x - inset, y: br.y - inset * 1.1)
+        let bBL = CGPoint(x: bl.x + inset, y: bl.y - inset * 1.1)
+        let bezelPath = roundedQuadPath(tl: bTL, tr: bTR, br: bBR, bl: bBL, radius: 4.0)
+        ctx.setStrokeColor(pal.lidBorder.withAlphaComponent(0.22).cgColor)
+        ctx.setLineWidth(0.9)
+        ctx.addPath(bezelPath)
+        ctx.strokePath()
+
+        // Subtle camera notch hint at top center of transparent B-side
+        let notchMidX = (bTL.x + bTR.x) * 0.5
+        let notchMidY = (bTL.y + bTR.y) * 0.5
+        let notchRect = CGRect(x: notchMidX - 13, y: notchMidY - 0.5, width: 26, height: 5.0)
+        let notchPath = CGPath(roundedRect: notchRect, cornerWidth: 2.0, cornerHeight: 2.0, transform: nil)
+        ctx.setFillColor(pal.lidBorder.withAlphaComponent(0.24).cgColor)
+        ctx.addPath(notchPath)
+        ctx.fillPath()
+
+        // Faint translucent Apple emblem centered on the A-side back
+        let logoCenter = CGPoint(
+            x: (tl.x + tr.x + bl.x + br.x) * 0.25,
+            y: (tl.y + tr.y + bl.y + br.y) * 0.25 - 1.0
+        )
+        drawTranslucentAppleEmblem(in: ctx, center: logoCenter, color: pal.logoColor)
+        ctx.restoreGState()
+
+        // 3. Crisp translucent metallic outer rim of the lid
+        ctx.setStrokeColor(pal.lidBorder.cgColor)
+        ctx.setLineWidth(1.5)
+        ctx.addPath(lidPath)
+        ctx.strokePath()
+
+        ctx.restoreGState()
+    }
+
+    private static func drawTranslucentAppleEmblem(in ctx: CGContext, center: CGPoint, color: NSColor) {
+        ctx.saveGState()
+        ctx.translateBy(x: center.x, y: center.y)
+        ctx.setFillColor(color.cgColor)
+
+        // Minimalist stylized apple silhouette (compact & clean at small scale)
+        let body = CGMutablePath()
+        body.move(to: CGPoint(x: 0, y: -5.2))
+        body.addCurve(to: CGPoint(x: 7.2, y: -1.5), control1: CGPoint(x: 3.8, y: -6.8), control2: CGPoint(x: 6.8, y: -4.4))
+        // Iconic subtle bite on right side
+        body.addCurve(to: CGPoint(x: 6.8, y: 4.5), control1: CGPoint(x: 4.6, y: 0.2), control2: CGPoint(x: 4.6, y: 3.4))
+        body.addCurve(to: CGPoint(x: 0.2, y: 8.6), control1: CGPoint(x: 5.5, y: 7.8), control2: CGPoint(x: 2.4, y: 9.2))
+        body.addCurve(to: CGPoint(x: -7.2, y: 3.0), control1: CGPoint(x: -2.4, y: 9.2), control2: CGPoint(x: -6.2, y: 7.4))
+        body.addCurve(to: CGPoint(x: 0, y: -5.2), control1: CGPoint(x: -8.6, y: -2.6), control2: CGPoint(x: -4.2, y: -6.8))
+        body.closeSubpath()
+        ctx.addPath(body)
+        ctx.fillPath()
+
+        // Little tilted leaf on top
+        let leaf = CGMutablePath()
+        leaf.move(to: CGPoint(x: 0.2, y: -6.2))
+        leaf.addQuadCurve(to: CGPoint(x: 3.8, y: -10.0), control: CGPoint(x: 0.6, y: -9.5))
+        leaf.addQuadCurve(to: CGPoint(x: 0.2, y: -6.2), control: CGPoint(x: 3.6, y: -6.8))
+        leaf.closeSubpath()
+        ctx.addPath(leaf)
+        ctx.fillPath()
+
+        ctx.restoreGState()
+    }
+
+    // MARK: - Tail
     private static func drawKeyboard(
         in ctx: CGContext,
         physics: CatPhysics,
@@ -2669,7 +2986,7 @@ enum CatRenderer {
         let scruff = max(0, min(1, physics.scruffDrag.value))
         let lie = max(0, min(1, physics.lieIntensity.value))
         let lieS = lie * lie * (3.0 - 2.0 * lie)
-        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
+        let seatY = CatPhysics.seatAnchor.y + physics.bodyShiftY.value - scruff * 22.0 + lieS * 10.0
         let c = tailCurve(seatX: seatX, seatY: seatY, physics: physics, skin: CatSettings.shared.activeSkin)
         return (c.root, c.c1, c.c2, c.tip)
     }

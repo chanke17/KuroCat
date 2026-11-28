@@ -5,6 +5,7 @@ final class RenderSettings {
  var coatTheme = CatCoatTheme.classicBlack
  var eyeTheme = EyeColorTheme.neonChartreuse
  var keyboardTheme = KeyboardTheme.classicMilk
+ var deskSetupMode = DeskSetupMode.keyboardAndMouse
  var activeKeyboardSkin: KeyboardSkinSpec { KeyboardSkinSpec.builtIn(keyboardTheme) }
  var showKeyLegends = false
  var overrideSkin: SkinSpec?

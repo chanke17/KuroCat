@@ -51,7 +51,9 @@ for fn in ('headPoint', 'bodyPoint'):
 (out / 'CurrentRenderer.swift').write_text(src)
 PY
     swiftc -module-cache-path "$WORK/cache" \
-        "$ROOT/Sources/KeyMap.swift" "$ROOT/Sources/InputEngine.swift" "$ROOT/Sources/CoatPatterns.swift" "$ROOT/Sources/BeagleAtlas.swift" \
+        "$ROOT/Sources/KeyMap.swift" "$ROOT/Sources/InputEngine.swift" \
+        "$ROOT/Sources/PeripheralClassifier.swift" "$ROOT/Sources/HardwareMonitor.swift" \
+        "$ROOT/Sources/CoatPatterns.swift" "$ROOT/Sources/BeagleAtlas.swift" \
         "$WORK/CatPhysics.swift" "$WORK/CurrentRenderer.swift" "$ROOT/tests/rig/main.swift" -o "$WORK/rig_swift" \
         -framework AppKit -framework CoreGraphics -framework QuartzCore -framework IOKit -framework ApplicationServices
     "$WORK/rig_swift" "$ROOT/tests/rig/golden.tsv"

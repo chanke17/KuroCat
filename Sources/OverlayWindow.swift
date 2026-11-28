@@ -1541,6 +1541,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var resetSkinsDirBtn: KuroThemedButton?
     private var kbPopup: NSPopUpButton?
     private var eyePopup: NSPopUpButton?
+    private var deskSetupPopup: NSPopUpButton?
+    private var macBookColorPopup: NSPopUpButton?
     private var tabletPopup: NSPopUpButton?
     private var typingLimbPopup: NSPopUpButton?
     private var obsPopup: NSPopUpButton?
@@ -1605,7 +1607,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func clearControlRefs() {
         skinPopup = nil; skinsDirLabel = nil; resetSkinsDirBtn = nil
-        kbPopup = nil; eyePopup = nil; tabletPopup = nil; typingLimbPopup = nil
+        kbPopup = nil; eyePopup = nil; deskSetupPopup = nil; macBookColorPopup = nil; tabletPopup = nil; typingLimbPopup = nil
         obsPopup = nil; langSeg = nil
         whiteOutlineSwitch = nil; flipSwitch = nil; angerSwitch = nil; dragAnimSwitch = nil
         badgesSwitch = nil; mouseBadgesSwitch = nil; legendsSwitch = nil; marqueeSwitch = nil
@@ -1887,6 +1889,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 scaleValLabel = sVal
                 card.addSubview(makeBtn(tr("重置位置", "Reset"), variant: .secondary, action: #selector(onTapResetPose), frame: NSRect(x: 386, y: r7 + 8, width: 78, height: 24)))
             }
+            addCard(rows: 2) { card, rh in
+                card.addSubview(makeLabel(tr("桌面外设", "Desk Setup"), yPos: 3, width: 110))
+                let deskP = NSPopUpButton(frame: NSRect(x: 128, y: 8, width: 336, height: 24), pullsDown: false)
+                for mode in DeskSetupMode.allCases {
+                    deskP.addItem(withTitle: mode.title(english: s.isEnglish))
+                }
+                if let idx = DeskSetupMode.allCases.firstIndex(of: s.deskSetupMode) { deskP.selectItem(at: idx) }
+                deskP.target = self
+                deskP.action = #selector(onDeskSetupSelected)
+                card.addSubview(deskP)
+                deskSetupPopup = deskP
+                addRowDivider(card, yPos: 3 + rh)
+
+                let r1 = 3 + rh
+                card.addSubview(makeLabel(tr("笔记本颜色", "Laptop Color"), yPos: r1, width: 110))
+                let colorP = NSPopUpButton(frame: NSRect(x: 128, y: r1 + 8, width: 336, height: 24), pullsDown: false)
+                for opt in MacBookColorOption.allCases {
+                    colorP.addItem(withTitle: opt.title(english: s.isEnglish))
+                }
+                if let idx = MacBookColorOption.allCases.firstIndex(of: s.macBookColorOption) { colorP.selectItem(at: idx) }
+                colorP.target = self
+                colorP.action = #selector(onMacBookColorSelected)
+                card.addSubview(colorP)
+                macBookColorPopup = colorP
+            }
         } else if activeTab == 1 {
             addCard(rows: 10) { card, rh in
                 card.addSubview(makeLabel(tr("拎起拖拽动画", "Scruff-Drag Lift Animation"), yPos: 3, width: 360))
@@ -2153,6 +2180,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             CatSettings.shared.customKeyboard = ""
             CatSettings.shared.keyboardTheme = kb
         }
+        onSettingsChanged?()
+    }
+
+    @objc private func onDeskSetupSelected() {
+        guard let popup = deskSetupPopup else { return }
+        let idx = popup.indexOfSelectedItem
+        let modes = DeskSetupMode.allCases
+        guard idx >= 0 && idx < modes.count else { return }
+        CatSettings.shared.deskSetupMode = modes[idx]
+        onSettingsChanged?()
+    }
+
+    @objc private func onMacBookColorSelected() {
+        guard let popup = macBookColorPopup else { return }
+        let idx = popup.indexOfSelectedItem
+        let options = MacBookColorOption.allCases
+        guard idx >= 0 && idx < options.count else { return }
+        CatSettings.shared.macBookColorOption = options[idx]
         onSettingsChanged?()
     }
 
