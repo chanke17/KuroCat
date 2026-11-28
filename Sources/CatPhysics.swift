@@ -32,6 +32,34 @@ enum CatCoatTheme: String, CaseIterable {
     case orangeWhite = "橘白猫"
 }
 
+/// Heavy 0:00–6:00 local-time eyelids. Stable raw values are persisted; titles are localized in the UI.
+enum TiredEyesMode: String, CaseIterable {
+    case autoLateNight = "auto"
+    case alwaysOn = "always"
+    case off = "off"
+
+    func title(english: Bool) -> String {
+        switch self {
+        case .autoLateNight: return english ? "Auto (0:00–6:00)" : "自动 (0:00–6:00)"
+        case .alwaysOn: return english ? "Always On" : "始终开启"
+        case .off: return english ? "Off" : "关闭"
+        }
+    }
+
+    static func isLateNightHour(_ hour: Int) -> Bool {
+        hour >= 0 && hour < 6
+    }
+
+    /// Fully-on tiredness target for the given clock window.
+    static func targetLevel(mode: TiredEyesMode, isLateNight: Bool) -> CGFloat {
+        switch mode {
+        case .autoLateNight: return isLateNight ? 1 : 0
+        case .alwaysOn: return 1
+        case .off: return 0
+        }
+    }
+}
+
 enum EyeColorTheme: String, CaseIterable {
     case neonChartreuse = "经典荧光黄绿 (原版)"
     case siameseBlue = "暹罗宝石蓝 (暹罗标配)"
@@ -176,6 +204,10 @@ final class CatSettings {
     var eyeTheme: EyeColorTheme {
         didSet { UserDefaults.standard.set(eyeTheme.rawValue, forKey: "KuroCat.EyeTheme") }
     }
+    /// 0:00–6:00 droopy eyelids. Default follows the local clock; it does not change sleep posture.
+    var tiredEyesMode: TiredEyesMode {
+        didSet { UserDefaults.standard.set(tiredEyesMode.rawValue, forKey: "KuroCat.TiredEyesMode") }
+    }
     /// True once the user explicitly picks an eye colour, allowing desktop settings to override a skin's built-in iris.
     var overrideSkinIris: Bool {
         didSet { UserDefaults.standard.set(overrideSkinIris, forKey: "KuroCat.OverrideSkinIris") }
@@ -260,6 +292,7 @@ final class CatSettings {
         keyboardTheme = KeyboardTheme(rawValue: d.string(forKey: "KuroCat.KeyboardTheme") ?? "") ?? .classicMilk
         let savedEye = d.string(forKey: "KuroCat.EyeTheme") ?? ""
         eyeTheme = EyeColorTheme.saved(savedEye)
+        tiredEyesMode = TiredEyesMode(rawValue: d.string(forKey: "KuroCat.TiredEyesMode") ?? "") ?? .autoLateNight
         overrideSkinIris = d.object(forKey: "KuroCat.OverrideSkinIris") as? Bool ?? false
         customSkin = d.string(forKey: "KuroCat.CustomSkin") ?? ""
         customKeyboard = d.string(forKey: "KuroCat.CustomKeyboard") ?? ""
@@ -504,6 +537,11 @@ final class CatPhysics {
     private var petCursorCanvasPos: CGPoint = .zero
     private var petSparkleCooldown: CGFloat = 0
 
+    // Late-night tired eyes (independent of the landed sleep posture)
+    private(set) var tiredness: CGFloat = 0  // 0 = fresh, 1 = heavy 0:00–6:00 lids
+    private(set) var isLateNightHours: Bool = false
+    private var lastClockCheckTime: CFTimeInterval = -100
+
     // Sleepy idle state
     private(set) var sleepiness: CGFloat = 0 // 0 = awake, 1 = napping
     var isMusicPlaying: Bool = false
@@ -544,6 +582,12 @@ final class CatPhysics {
         let petClose = max(petHeadIntensity * 1.0, petBodyIntensity * 0.62)
         let sleepClose = max(sleepiness * 0.92, yawnAmount * 0.96)
         return min(1.0, max(blinkProgress, max(petClose, sleepClose)))
+    }
+
+    /// Active tiredness. Hunting lifts the lids so a chase still reads as alert.
+    var effectiveTiredness: CGFloat {
+        let hunt = max(0, min(1, huntIntensity.value))
+        return max(0, min(1, tiredness * (1.0 - hunt * 0.78)))
     }
 
     var breathingOffset: CGFloat { sin(time * 2.1) * 1.6 }
@@ -910,7 +954,19 @@ final class CatPhysics {
             }
         }
 
-        // 2. Sleepy idle detection (+ cute yawn right before drifting off to sleep!)
+        // 2. Late-night tired eyes (local 0:00–6:00). Sleep timing below is unchanged.
+        if now - lastClockCheckTime > 5.0 {
+            lastClockCheckTime = now
+            let hour = Calendar.current.component(.hour, from: Date())
+            isLateNightHours = TiredEyesMode.isLateNightHour(hour)
+        }
+        let targetTiredness = TiredEyesMode.targetLevel(
+            mode: CatSettings.shared.tiredEyesMode,
+            isLateNight: isLateNightHours
+        )
+        tiredness += (targetTiredness - tiredness) * min(1.0, dt * 2.5)
+
+        // 2b. Sleepy idle detection (+ cute yawn right before drifting off to sleep!)
         let lastAnyActivity = max(curLastKeyTime, max(curLastMouseMove, lastPetTime))
         let idleSeconds = lastAnyActivity > 0 ? (now - lastAnyActivity) : 0
         if activeKeys.isEmpty && idleSeconds > 42 && !isYawning && !hasYawnedThisIdle {
@@ -1520,14 +1576,16 @@ final class CatPhysics {
         }
         pupilScale.step(dt: dt, stiffness: 150, damping: 18)
 
-        // 6. Blinking (cats lock eyes without blinking during hunting mode!)
+        // 6. Blinking (cats lock eyes without blinking during hunting mode; slower blinks when tired!)
         if isBlinking {
             blinkTimer += dt
-            let blinkDuration: CGFloat = 0.14
+            let blinkDuration: CGFloat = 0.14 + effectiveTiredness * 0.08
             if blinkTimer >= blinkDuration {
                 isBlinking = false
                 blinkProgress = 0
-                nextBlinkTime = time + CGFloat.random(in: 2.6...5.6)
+                let minInterval: CGFloat = effectiveTiredness > 0.4 ? 1.9 : 2.6
+                let maxInterval: CGFloat = effectiveTiredness > 0.4 ? 4.2 : 5.6
+                nextBlinkTime = time + CGFloat.random(in: minInterval...maxInterval)
             } else {
                 let p = blinkTimer / blinkDuration
                 blinkProgress = sin(p * .pi)

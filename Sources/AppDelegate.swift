@@ -553,9 +553,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // Live stats
+        let tiredSuffix = physics.effectiveTiredness > 0.35
+            ? (en ? "  ·  Up late" : "  ·  🌙 熬夜困困中")
+            : ""
         let statsTitle = en
-            ? "⌨️ Today \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  Pets \(physics.totalPetSessions)"
-            : "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次"
+            ? "⌨️ Today \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  Pets \(physics.totalPetSessions)\(tiredSuffix)"
+            : "⌨️ 今日击键 \(engine.totalKeystrokesToday)  ·  KPM \(engine.currentKPM)  ·  摸猫 \(physics.totalPetSessions) 次\(tiredSuffix)"
         let statsItem = NSMenuItem(title: statsTitle, action: nil, keyEquivalent: "")
         statsItem.isEnabled = false
         menu.addItem(statsItem)
@@ -673,6 +676,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         levelKbItem.target = self
         levelKbItem.state = settings.levelKeyboard ? .on : .off
         menu.addItem(levelKbItem)
+
+        let tiredMenu = NSMenu()
+        for mode in TiredEyesMode.allCases {
+            let item = NSMenuItem(title: mode.title(english: en), action: #selector(selectTiredEyesMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = settings.tiredEyesMode == mode ? .on : .off
+            tiredMenu.addItem(item)
+        }
+        let tiredParent = NSMenuItem(title: tr("熬夜疲惫眼 🌙", "Tired Eyes 🌙"), action: nil, keyEquivalent: "")
+        tiredParent.submenu = tiredMenu
+        menu.addItem(tiredParent)
 
         let settingsItem = NSMenuItem(title: tr("⚙️ 设置…", "⚙️ Settings…"), action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
@@ -1048,6 +1063,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleLevelKeyboard() {
         CatSettings.shared.levelKeyboard.toggle()
+        wakeToActive(immediateRedraw: true)
+        settingsWindow?.refresh()
+    }
+
+    @objc private func selectTiredEyesMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = TiredEyesMode(rawValue: raw) else { return }
+        CatSettings.shared.tiredEyesMode = mode
         wakeToActive(immediateRedraw: true)
         settingsWindow?.refresh()
     }
