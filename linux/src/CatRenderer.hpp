@@ -3695,34 +3695,37 @@ private:
         if (outlineOnly) return;
         const SkinPalette& pal = skin.palette;
         float sign = isLeft ? -1.0f : 1.0f;
+        auto traceIdleLeg = [&]() {
+            cairo_new_path(cr);
+            cairo_move_to(cr, top.x + sign * 8.5, top.y);
+            quadCurveTo(cr, top.x + sign * 8.5, top.y, top.x + sign * 9.5, (top.y + bottom.y) * 0.5, bottom.x + sign * 7.5, bottom.y - 1.0);
+            quadCurveTo(cr, bottom.x + sign * 7.5, bottom.y - 1.0, bottom.x + sign * 7.0, bottom.y + 5.2, bottom.x + sign * 0.8, bottom.y + 5.2);
+            quadCurveTo(cr, bottom.x + sign * 0.8, bottom.y + 5.2, bottom.x - sign * 6.2, bottom.y + 5.2, bottom.x - sign * 6.0, bottom.y - 1.0);
+            quadCurveTo(cr, bottom.x - sign * 6.0, bottom.y - 1.0, top.x - sign * 6.5, (top.y + bottom.y) * 0.5, top.x - sign * 7.0, top.y + 4.0);
+            cairo_close_path(cr);
+        };
         if (skin.colorpoint()) {
+            const char* armKey = isLeft ? "leftArm" : "rightArm";
             cairo_save(cr);
-            roundedRect(cr, bottom.x - 7.5, top.y, 15.0, bottom.y - top.y + 5.0, 6.5);
-            cairo_pattern_t* grad = detail::CairoPatternCache::instance().getLinear(top.x, top.y, bottom.x, bottom.y + 5.0, {
-                {0.05, pal.body.r, pal.body.g, pal.body.b, 0.0},
-                {0.50, pal.pointsMid.r, pal.pointsMid.g, pal.pointsMid.b, pal.pointsMid.a * 0.75},
-                {0.82, pal.points.r, pal.points.g, pal.points.b, pal.points.a}
-            });
-            cairo_set_source(cr, grad);
-            cairo_fill(cr);
-            if (const SkinPartTexture* armTex = skin.partTexture(isLeft ? "leftArm" : "rightArm")) {
-                roundedRect(cr, bottom.x - 7.5, top.y, 15.0, bottom.y - top.y + 5.0, 6.5);
+            traceIdleLeg();
+            if (auto ag = skin.partGradients.find(armKey); ag != skin.partGradients.end()) {
+                fillPartGradient(cr, top.x, top.y, bottom.x, bottom.y + 5.0, ag->second);
+            } else {
+                cairo_pattern_t* grad = detail::CairoPatternCache::instance().getLinear(top.x, top.y, bottom.x, bottom.y + 5.0, {
+                    {0.05, pal.body.r, pal.body.g, pal.body.b, 0.0},
+                    {0.50, pal.pointsMid.r, pal.pointsMid.g, pal.pointsMid.b, pal.pointsMid.a * 0.75},
+                    {0.82, pal.points.r, pal.points.g, pal.points.b, pal.points.a}
+                });
+                cairo_set_source(cr, grad);
+                cairo_fill(cr);
+            }
+            if (const SkinPartTexture* armTex = skin.partTexture(armKey)) {
+                traceIdleLeg();
                 cairo_clip(cr);
                 drawIdleArmPartTexture(cr, *armTex, top, bottom, sign);
             }
             cairo_restore(cr);
         } else {
-            // Smooth shoulder-fade leg fill so palette.legs shows cleanly on idle sitting legs too
-            // ("idleLegs": "legs"; the built-in coats use "chest" and keep their approved look)
-            auto traceIdleLeg = [&]() {
-                cairo_new_path(cr);
-                cairo_move_to(cr, top.x + sign * 8.5, top.y);
-                quadCurveTo(cr, top.x + sign * 8.5, top.y, top.x + sign * 9.5, (top.y + bottom.y) * 0.5, bottom.x + sign * 7.5, bottom.y - 1.0);
-                quadCurveTo(cr, bottom.x + sign * 7.5, bottom.y - 1.0, bottom.x + sign * 7.0, bottom.y + 5.2, bottom.x + sign * 0.8, bottom.y + 5.2);
-                quadCurveTo(cr, bottom.x + sign * 0.8, bottom.y + 5.2, bottom.x - sign * 6.2, bottom.y + 5.2, bottom.x - sign * 6.0, bottom.y - 1.0);
-                quadCurveTo(cr, bottom.x - sign * 6.0, bottom.y - 1.0, top.x - sign * 6.5, (top.y + bottom.y) * 0.5, top.x - sign * 7.0, top.y + 4.0);
-                cairo_close_path(cr);
-            };
             SkinSpace armSpace = isLeft ? SkinSpace::LeftArm : SkinSpace::RightArm;
             const char* armKey = isLeft ? "leftArm" : "rightArm";
             const SkinPartTexture* armTex = skin.partTexture(armKey);
@@ -3903,7 +3906,7 @@ private:
                 cairo_restore(cr);
             }
             if (limbTex) {
-                setCol(cr, limbBase);
+                setCol(cr, limbPaw);
                 cairo_new_path(cr);
                 fillEllipse(cr, end.x, end.y, pawR, pawR * 0.85);
                 cairo_fill(cr);
@@ -6086,10 +6089,18 @@ public:
                     }
                 }
             }
+            const SkinPartTexture* dragHeadTex = skin.partTexture("head");
             if (const SkinPartTexture* bodyTex = skin.partTexture("body")) {
                 cairo_save(cr);
-                jawSide(cr, false, skin, headCenter, physics);
-                cairo_clip(cr);
+                if (dragHeadTex) {
+                    cairo_translate(cr, 0.0, -1.5);
+                    jawSide(cr, false, skin, headCenter, physics);
+                    cairo_clip(cr);
+                    cairo_translate(cr, 0.0, 1.5);
+                } else {
+                    jawSide(cr, false, skin, headCenter, physics);
+                    cairo_clip(cr);
+                }
                 std::vector<partwarp::StripSample> samples;
                 constexpr int kSteps = 12;
                 samples.reserve(kSteps + 1);
@@ -6102,9 +6113,9 @@ public:
                 drawStripMeshPartTexture(cr, *bodyTex, samples, partwarp::BODY_UV, true);
                 cairo_restore(cr);
             }
-            if (const SkinPartTexture* headTex = skin.partTexture("head")) {
+            if (dragHeadTex) {
                 bool isDome = skin.headSurface == SkinHeadSurface::Dome;
-                if (cairo_surface_t* headSurf = warpedHeadDomeSurface(*headTex, isDome,
+                if (cairo_surface_t* headSurf = warpedHeadDomeSurface(*dragHeadTex, isDome,
                                                                       physics.headYaw.value * kurorig::YawPerUnit,
                                                                       physics.headPitch.value * kurorig::PitchPerUnit)) {
                     cairo_save(cr);
@@ -6134,19 +6145,21 @@ public:
                 cairo_restore(cr);
             }
 
-            // Subtle soft chin shadow curve
-            cairo_save(cr);
-            if (isBlackRim) cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
-            else if (pal.outline.set) setCol(cr, pal.outline, 0.45);
-            else cairo_set_source_rgba(cr, 0.18, 0.15, 0.12, 0.16);
-            cairo_set_line_width(cr, isBlackRim ? 1.05 : 1.0);
-            cairo_new_path(cr);
-            cairo_move_to(cr, headCenterD.x - cheekHalfW * 0.56, headCenterD.y + chinY - 2.5 * hs);
-            quadCurveTo(cr, headCenterD.x - cheekHalfW * 0.56, headCenterD.y + chinY - 2.5 * hs,
-                        headCenterD.x, headCenterD.y + chinY + 3.5 * hs,
-                        headCenterD.x + cheekHalfW * 0.56, headCenterD.y + chinY - 2.5 * hs);
-            cairo_stroke(cr);
-            cairo_restore(cr);
+            // Subtle soft chin shadow curve (skip when custom head pixel texture is painted)
+            if (!dragHeadTex) {
+                cairo_save(cr);
+                if (isBlackRim) cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
+                else if (pal.outline.set) setCol(cr, pal.outline, 0.45);
+                else cairo_set_source_rgba(cr, 0.18, 0.15, 0.12, 0.16);
+                cairo_set_line_width(cr, isBlackRim ? 1.05 : 1.0);
+                cairo_new_path(cr);
+                cairo_move_to(cr, headCenterD.x - cheekHalfW * 0.56, headCenterD.y + chinY - 2.5 * hs);
+                quadCurveTo(cr, headCenterD.x - cheekHalfW * 0.56, headCenterD.y + chinY - 2.5 * hs,
+                            headCenterD.x, headCenterD.y + chinY + 3.5 * hs,
+                            headCenterD.x + cheekHalfW * 0.56, headCenterD.y + chinY - 2.5 * hs);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+            }
         }
 
         // 5. Native KuroCat Face Features (normal authentic almond eyes — no round bug-eyes!)

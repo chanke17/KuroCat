@@ -2345,8 +2345,8 @@
       }
 
       if (limbTex) {
-        // Fill paw base underneath texture first, then draw unified limb+paw texture so paw tips are never covered
-        ctx.fillStyle = rgbaToCss(limbBaseCol);
+        // Fill paw base with limbPawCol underneath texture so paw tip margins never leak limbBaseCol
+        ctx.fillStyle = rgbaToCss(limbPawCol);
         ctx.beginPath();
         ctx.ellipse(end.x, end.y, pawR, pawR * 0.85, 0, 0, Math.PI * 2);
         ctx.fill();
@@ -2439,14 +2439,24 @@
     if (pal.points) {
       const mid = pal.pointsMid || pal.points;
       ctx.save();
-      roundedRectPath(ctx, bottom.x - 7.5, top.y, 15.0, bottom.y - top.y + 5.0, 6.5);
+      traceLeg();
       ctx.clip();
-      const g = ctx.createLinearGradient(top.x, top.y, bottom.x, bottom.y + 5.0);
-      g.addColorStop(0.05, rgbaToCss(pal.body, 0));
-      g.addColorStop(0.50, rgbaToCss(mid, 0.75));
-      g.addColorStop(0.82, rgbaToCss(pal.points, 1));
-      ctx.fillStyle = g;
-      ctx.fillRect(bottom.x - 9, top.y - 1, 18, bottom.y - top.y + 8);
+      const armGrad = skin.partGradients && skin.partGradients[armSpace];
+      if (armGrad) {
+        const g = ctx.createLinearGradient(top.x, top.y, bottom.x, bottom.y + 5.0);
+        g.addColorStop(0.0, rgbaToCss(armGrad.from));
+        g.addColorStop(clamp(armGrad.stop || 0.5, 0.1, 0.9), rgbaToCss(armGrad.to));
+        g.addColorStop(1.0, rgbaToCss(armGrad.to));
+        ctx.fillStyle = g;
+        ctx.fillRect(bottom.x - 16, top.y - 2, 32, bottom.y - top.y + 10);
+      } else {
+        const g = ctx.createLinearGradient(top.x, top.y, bottom.x, bottom.y + 5.0);
+        g.addColorStop(0.05, rgbaToCss(pal.body, 0));
+        g.addColorStop(0.50, rgbaToCss(mid, 0.75));
+        g.addColorStop(0.82, rgbaToCss(pal.points, 1));
+        ctx.fillStyle = g;
+        ctx.fillRect(bottom.x - 16, top.y - 2, 32, bottom.y - top.y + 10);
+      }
       if (armTex) {
         drawIdleArmPartTexture(ctx, armTex, top, bottom, sign);
       }
@@ -5266,6 +5276,7 @@
       traceLimbFill(limb);
       ctx.clip();
       const grad = ctx.createLinearGradient(limb.root.x, limb.root.y, limb.tip.x, limb.tip.y);
+      let usedTransparentFrontFill = false;
       if (isDazed) {
         grad.addColorStop(0.0, '#E3C99F');
         grad.addColorStop(1.0, '#C8A77A');
@@ -5280,24 +5291,31 @@
         grad.addColorStop(0.0, rgbaToCss(lg.from));
         grad.addColorStop(clamp(lg.stop || 0.5, 0.1, 0.9), rgbaToCss(lg.to));
         grad.addColorStop(1.0, rgbaToCss(lg.to));
-      } else {
-        const shoulderCol = pal.body;
-        if (!limb.isBehindBody && !sameColor(pal.legs, shoulderCol)) {
-          grad.addColorStop(0.0, rgbaToCss(shoulderCol));
-          grad.addColorStop(0.14, rgbaToCss(shoulderCol));
-          grad.addColorStop(0.42, rgbaToCss(pal.legs));
-          grad.addColorStop(0.82, rgbaToCss(pal.paws));
+      } else if (!limb.isBehindBody) {
+        // Match seated drawIdleFrontLeg 1:1 (transparent shoulder fade into legs, then arm marks/texture, then paw cuff)
+        if (limb.armSpace && !(skin.partGradients && skin.partGradients[limb.armSpace]) && skin.idleLegsTinted !== false) {
+          grad.addColorStop(0.04, rgbaToCss(pal.legs, 0));
+          grad.addColorStop(0.32, rgbaToCss(pal.legs));
+          grad.addColorStop(1.0, rgbaToCss(pal.legs));
+          usedTransparentFrontFill = true;
         } else {
-          const legCol = limb.isBehindBody ? (pal.hindLeg || pal.legs) : pal.legs;
-          const pawCol = limb.isBehindBody ? (pal.hindPaw || pal.paws) : pal.paws;
-          grad.addColorStop(0.22, rgbaToCss(legCol));
-          grad.addColorStop(0.75, rgbaToCss(pawCol));
+          ctx.fillStyle = rgbaToCss(pal.belly || pal.body);
+          ctx.fillRect(0, 0, 360, 320);
+          usedTransparentFrontFill = true;
         }
+      } else {
+        const legCol = pal.hindLeg || pal.legs;
+        const pawCol = pal.hindPaw || pal.paws;
+        grad.addColorStop(0.22, rgbaToCss(legCol));
+        grad.addColorStop(0.75, rgbaToCss(pawCol));
       }
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 360, 320);
+      if (!usedTransparentFrontFill || (limb.armSpace && !(skin.partGradients && skin.partGradients[limb.armSpace]) && skin.idleLegsTinted !== false)) {
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 360, 320);
+      }
 
       // Map custom leftArm / rightArm / hindLeg regions & marks directly onto the dangling limbs!
+      const dragLimbTex = limb.armSpace ? getPartTextureSource(skin, limb.armSpace) : null;
       if (limb.armSpace && skin.hasPartArt && skin.hasPartArt(limb.armSpace)) {
         const sign = limb.armSpace === 'leftArm' ? -1 : ((limb.armSpace === 'hindLeg' && limb.bendX < 0) ? -1 : 1);
         const armMap = (p) => {
@@ -5314,31 +5332,42 @@
         };
         for (const r of skin.regions) if (r.space === limb.armSpace) drawRegion(ctx, r, armMap);
         for (const mk of skin.marks) if (mk.space === limb.armSpace) drawMark(ctx, mk, 'round', armMap);
-        const dragLimbTex = getPartTextureSource(skin, limb.armSpace);
-        if (dragLimbTex) {
-          const samples = [];
-          const dxD = limb.tip.x - limb.root.x, dyD = limb.tip.y - limb.root.y;
-          const lenD = Math.max(1, Math.hypot(dxD, dyD));
-          const uxD = dxD / lenD, uyD = dyD / lenD;
-          const spanScale = lenD / 100.0;
-          const steps = 16;
-          for (let i = 0; i <= steps; i++) {
-            const xCoord = PART_UV.limb.x0 + (i / steps) * (PART_UV.limb.x1 - PART_UV.limb.x0);
-            const tRaw = xCoord / 100.0;
-            const tC = clamp(tRaw, 0, 1);
-            const omt = 1 - tC;
-            const lx = omt * omt * gGeo.p0L.x + 2 * omt * tC * gGeo.midL.x + tC * tC * gGeo.p1L.x;
-            const ly = omt * omt * gGeo.p0L.y + 2 * omt * tC * gGeo.midL.y + tC * tC * gGeo.p1L.y;
-            const rx = omt * omt * gGeo.p0R.x + 2 * omt * tC * gGeo.midR.x + tC * tC * gGeo.p1R.x;
-            const ry = omt * omt * gGeo.p0R.y + 2 * omt * tC * gGeo.midR.y + tC * tC * gGeo.p1R.y;
-            let cx = (lx + rx) * 0.5, cy = (ly + ry) * 0.5;
-            if (tRaw < 0) { cx += uxD * (tRaw * 100.0) * spanScale; cy += uyD * (tRaw * 100.0) * spanScale; }
-            else if (tRaw > 1) { cx += uxD * ((tRaw - 1) * 100.0) * spanScale; cy += uyD * ((tRaw - 1) * 100.0) * spanScale; }
-            const hx = (rx - lx) * 0.5 * 1.4 * sign, hy = (ry - ly) * 0.5 * 1.4 * sign;
-            samples.push({ left: { x: cx + hx, y: cy + hy }, right: { x: cx - hx, y: cy - hy }, xCoord });
-          }
-          blitStripMesh(ctx, dragLimbTex, samples, PART_UV.limb);
+      }
+      if (dragLimbTex && limb.armSpace) {
+        const sign = limb.armSpace === 'leftArm' ? -1 : ((limb.armSpace === 'hindLeg' && limb.bendX < 0) ? -1 : 1);
+        const samples = [];
+        const dxD = limb.tip.x - limb.root.x, dyD = limb.tip.y - limb.root.y;
+        const lenD = Math.max(1, Math.hypot(dxD, dyD));
+        const uxD = dxD / lenD, uyD = dyD / lenD;
+        const spanScale = lenD / 100.0;
+        const steps = 16;
+        for (let i = 0; i <= steps; i++) {
+          const xCoord = PART_UV.limb.x0 + (i / steps) * (PART_UV.limb.x1 - PART_UV.limb.x0);
+          const tRaw = xCoord / 100.0;
+          const tC = clamp(tRaw, 0, 1);
+          const omt = 1 - tC;
+          const lx = omt * omt * gGeo.p0L.x + 2 * omt * tC * gGeo.midL.x + tC * tC * gGeo.p1L.x;
+          const ly = omt * omt * gGeo.p0L.y + 2 * omt * tC * gGeo.midL.y + tC * tC * gGeo.p1L.y;
+          const rx = omt * omt * gGeo.p0R.x + 2 * omt * tC * gGeo.midR.x + tC * tC * gGeo.p1R.x;
+          const ry = omt * omt * gGeo.p0R.y + 2 * omt * tC * gGeo.midR.y + tC * tC * gGeo.p1R.y;
+          let cx = (lx + rx) * 0.5, cy = (ly + ry) * 0.5;
+          if (tRaw < 0) { cx += uxD * (tRaw * 100.0) * spanScale; cy += uyD * (tRaw * 100.0) * spanScale; }
+          else if (tRaw > 1) { cx += uxD * ((tRaw - 1) * 100.0) * spanScale; cy += uyD * ((tRaw - 1) * 100.0) * spanScale; }
+          const hx = (rx - lx) * 0.5 * 1.4 * sign, hy = (ry - ly) * 0.5 * 1.4 * sign;
+          samples.push({ left: { x: cx + hx, y: cy + hy }, right: { x: cx - hx, y: cy - hy }, xCoord });
         }
+        blitStripMesh(ctx, dragLimbTex, samples, PART_UV.limb);
+      }
+      // Seated-consistent paw cuff overlay AFTER arm marks (matches desktop drawDragLimb & drawIdleFrontLeg)
+      if (!dragLimbTex && !isDazed && !skin.colorpoint && !limb.isBehindBody &&
+          limb.armSpace && !(skin.partGradients && skin.partGradients[limb.armSpace]) &&
+          !sameColor(pal.paws, pal.legs)) {
+        const cuffGrad = ctx.createLinearGradient(limb.root.x, limb.root.y, limb.tip.x, limb.tip.y);
+        cuffGrad.addColorStop(0.74, rgbaToCss(pal.paws, 0));
+        cuffGrad.addColorStop(0.85, rgbaToCss(pal.paws));
+        cuffGrad.addColorStop(1.0, rgbaToCss(pal.paws));
+        ctx.fillStyle = cuffGrad;
+        ctx.fillRect(0, 0, 360, 320);
       }
       ctx.restore();
 
@@ -5699,6 +5728,7 @@
       }
 
       const dragBodyTex = getPartTextureSource(skin, 'body');
+      const dragHeadTex = getPartTextureSource(skin, 'head');
       if (dragBodyTex) {
         const samples = [];
         const y0 = PART_UV.body.y0, y1 = PART_UV.body.y1;
@@ -5712,12 +5742,18 @@
           });
         }
         ctx.save();
-        drawPolyline(ctx, dragBodyJawSide, true, headMap);
-        ctx.clip();
+        if (dragHeadTex) {
+          ctx.translate(0, -1.5);
+          drawPolyline(ctx, dragBodyJawSide, true, headMap);
+          ctx.clip();
+          ctx.translate(0, 1.5);
+        } else {
+          drawPolyline(ctx, dragBodyJawSide, true, headMap);
+          ctx.clip();
+        }
         blitStripMesh(ctx, dragBodyTex, samples, { x0: y0, x1: y1 }, true);
         ctx.restore();
       }
-      const dragHeadTex = getPartTextureSource(skin, 'head');
       if (dragHeadTex) {
         const yawRadD = (state.headYaw || 0) * RIG.yawPerUnit;
         const pitchRadD = (state.headPitch || 0) * RIG.pitchPerUnit;
@@ -5746,17 +5782,19 @@
         ctx.restore();
       }
 
-      // Subtle soft chin shadow curve (gentle depth cue without cutting a hard ring through solid coats)
-      ctx.save();
-      ctx.strokeStyle = isBlackRim
-        ? 'rgba(255,255,255,0.16)'
-        : (pal.outline ? rgbaToCss(pal.outline, 0.45) : 'rgba(46,38,31,0.16)');
-      ctx.lineWidth = isBlackRim ? 1.05 : 1.0;
-      ctx.beginPath();
-      ctx.moveTo(headCenter.x - cheekHalfW * 0.56, headCenter.y + chinY - 2.5 * hs);
-      ctx.quadraticCurveTo(headCenter.x, headCenter.y + chinY + 3.5 * hs, headCenter.x + cheekHalfW * 0.56, headCenter.y + chinY - 2.5 * hs);
-      ctx.stroke();
-      ctx.restore();
+      // Subtle soft chin shadow curve (skip when custom head pixel texture is painted, to avoid a double-chin seam)
+      if (!dragHeadTex) {
+        ctx.save();
+        ctx.strokeStyle = isBlackRim
+          ? 'rgba(255,255,255,0.16)'
+          : (pal.outline ? rgbaToCss(pal.outline, 0.45) : 'rgba(46,38,31,0.16)');
+        ctx.lineWidth = isBlackRim ? 1.05 : 1.0;
+        ctx.beginPath();
+        ctx.moveTo(headCenter.x - cheekHalfW * 0.56, headCenter.y + chinY - 2.5 * hs);
+        ctx.quadraticCurveTo(headCenter.x, headCenter.y + chinY + 3.5 * hs, headCenter.x + cheekHalfW * 0.56, headCenter.y + chinY - 2.5 * hs);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // 5. Native KuroCat face features (normal authentic almond eyes — no round bug-eyes!)

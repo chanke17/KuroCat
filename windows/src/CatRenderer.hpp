@@ -3595,33 +3595,35 @@ private:
         }
         if (outlineOnly) return;
 
+        GraphicsPath legShape;
+        addQuadBezier(legShape, { top.x + sign * 8.5f, top.y }, { top.x + sign * 9.5f, (top.y + bottom.y) * 0.5f }, { bottom.x + sign * 7.5f, bottom.y - 1.0f });
+        addQuadBezier(legShape, { bottom.x + sign * 7.5f, bottom.y - 1.0f }, { bottom.x + sign * 7.0f, bottom.y + 5.2f }, { bottom.x + sign * 0.8f, bottom.y + 5.2f });
+        addQuadBezier(legShape, { bottom.x + sign * 0.8f, bottom.y + 5.2f }, { bottom.x - sign * 6.2f, bottom.y + 5.2f }, { bottom.x - sign * 6.0f, bottom.y - 1.0f });
+        addQuadBezier(legShape, { bottom.x - sign * 6.0f, bottom.y - 1.0f }, { top.x - sign * 6.5f, (top.y + bottom.y) * 0.5f }, { top.x - sign * 7.0f, top.y + 4.0f });
+        legShape.CloseFigure();
+
         if (skin.colorpoint()) {
-            GraphicsPath lp;
-            addRoundedRect(lp, bottom.x - 7.5f, top.y, 15.0f, bottom.y - top.y + 5.0f, 6.5f);
-            float pad = 10.0f;
-            float span = std::max(1.0f, (bottom.y + 5.0f) - top.y);
-            float total = span + pad * 2.0f;
-            LinearGradientBrush grad(PointF(bottom.x, top.y - pad), PointF(bottom.x, bottom.y + 5.0f + pad), withAlpha(pal.body, 0), withAlpha(pal.points, 255));
-            grad.SetWrapMode(WrapModeTileFlipXY);
-            Color cols[5] = { withAlpha(pal.body, 0), withAlpha(pal.body, 0), withAlpha(pal.pointsMid, 190), withAlpha(pal.points, 255), withAlpha(pal.points, 255) };
-            REAL pos[5] = { 0.0f, pad / total, (pad + span * 0.50f) / total, (pad + span * 0.82f) / total, 1.0f };
-            grad.SetInterpolationColors(cols, pos, 5);
-            g.FillPath(&grad, &lp);
-            if (const SkinPartTexture* armTex = skin.partTexture(isLeft ? "leftArm" : "rightArm")) {
+            const char* armKey = isLeft ? "leftArm" : "rightArm";
+            if (auto ag = skin.partGradients.find(armKey); ag != skin.partGradients.end()) {
+                fillPartGradient(g, &legShape, PointF(top.x, top.y), PointF(bottom.x, bottom.y + 5.0f), ag->second);
+            } else {
+                float pad = 10.0f;
+                float span = std::max(1.0f, (bottom.y + 5.0f) - top.y);
+                float total = span + pad * 2.0f;
+                LinearGradientBrush grad(PointF(bottom.x, top.y - pad), PointF(bottom.x, bottom.y + 5.0f + pad), withAlpha(pal.body, 0), withAlpha(pal.points, 255));
+                grad.SetWrapMode(WrapModeTileFlipXY);
+                Color cols[5] = { withAlpha(pal.body, 0), withAlpha(pal.body, 0), withAlpha(pal.pointsMid, 190), withAlpha(pal.points, 255), withAlpha(pal.points, 255) };
+                REAL pos[5] = { 0.0f, pad / total, (pad + span * 0.50f) / total, (pad + span * 0.82f) / total, 1.0f };
+                grad.SetInterpolationColors(cols, pos, 5);
+                g.FillPath(&grad, &legShape);
+            }
+            if (const SkinPartTexture* armTex = skin.partTexture(armKey)) {
                 GraphicsState acs = g.Save();
-                g.SetClip(&lp, CombineModeIntersect);
+                g.SetClip(&legShape, CombineModeIntersect);
                 drawIdleArmPartTexture(g, *armTex, top, bottom, sign);
                 g.Restore(acs);
             }
         } else {
-            // Smooth shoulder-fade leg fill so palette.legs shows cleanly on idle sitting legs too
-            // ("idleLegs": "legs"; the built-in coats use "chest" and keep their approved look)
-            GraphicsPath legShape;
-            addQuadBezier(legShape, { top.x + sign * 8.5f, top.y }, { top.x + sign * 9.5f, (top.y + bottom.y) * 0.5f }, { bottom.x + sign * 7.5f, bottom.y - 1.0f });
-            addQuadBezier(legShape, { bottom.x + sign * 7.5f, bottom.y - 1.0f }, { bottom.x + sign * 7.0f, bottom.y + 5.2f }, { bottom.x + sign * 0.8f, bottom.y + 5.2f });
-            addQuadBezier(legShape, { bottom.x + sign * 0.8f, bottom.y + 5.2f }, { bottom.x - sign * 6.2f, bottom.y + 5.2f }, { bottom.x - sign * 6.0f, bottom.y - 1.0f });
-            addQuadBezier(legShape, { bottom.x - sign * 6.0f, bottom.y - 1.0f }, { top.x - sign * 6.5f, (top.y + bottom.y) * 0.5f }, { top.x - sign * 7.0f, top.y + 4.0f });
-            legShape.CloseFigure();
             SkinSpace armSpace = isLeft ? SkinSpace::LeftArm : SkinSpace::RightArm;
             const char* armKey = isLeft ? "leftArm" : "rightArm";
             const SkinPartTexture* armTex = skin.partTexture(armKey);
@@ -3846,7 +3848,8 @@ private:
                 g.Restore(cs);
             }
             if (limbTex) {
-                g.FillEllipse(&b, pawRect);
+                SolidBrush pawB(col(limbPaw));
+                g.FillEllipse(&pawB, pawRect);
                 GraphicsPath unionClip;
                 unionClip.AddPath(&limbPath, FALSE);
                 unionClip.AddEllipse(pawRect);
@@ -7619,10 +7622,15 @@ private:
                             }
                         }
                     }
+                    const SkinPartTexture* dragHeadTex = skin.partTexture("head");
                     if (const SkinPartTexture* bodyTex = skin.partTexture("body")) {
                         GraphicsState bsState = lg.Save();
                         GraphicsPath bodySide;
                         jawSide(bodySide, false, skin, headCenter, physics);
+                        if (dragHeadTex) {
+                            Matrix shiftUp(1.0f, 0.0f, 0.0f, 1.0f, 0.0f, -1.5f);
+                            bodySide.Transform(&shiftUp);
+                        }
                         lg.SetClip(&bodySide, CombineModeIntersect);
                         std::vector<partwarp::StripSample> samples;
                         constexpr int kSteps = 12;
@@ -7636,9 +7644,9 @@ private:
                         drawStripMeshPartTexture(lg, *bodyTex, samples, partwarp::BODY_UV, true);
                         lg.Restore(bsState);
                     }
-                    if (const SkinPartTexture* headTex = skin.partTexture("head")) {
+                    if (dragHeadTex) {
                         bool isDome = skin.headSurface == SkinHeadSurface::Dome;
-                        if (Bitmap* headBmp = warpedHeadDomeBitmap(*headTex, isDome,
+                        if (Bitmap* headBmp = warpedHeadDomeBitmap(*dragHeadTex, isDome,
                                                                    physics.headYaw.value * kurorig::YawPerUnit,
                                                                    physics.headPitch.value * kurorig::PitchPerUnit)) {
                             GraphicsState hsState = lg.Save();
@@ -7663,18 +7671,20 @@ private:
                     lg.DrawPath(&bp, &longCatPath);
                 }
 
-                // Subtle soft chin shadow curve
-                Pen chinPen(isBlackRim
-                    ? Color(41, 255, 255, 255)
-                    : (pal.outline.set ? colMul(pal.outline, 0.45f) : Color(41, 46, 38, 31)),
-                    isBlackRim ? 1.05f : 1.0f);
-                setRound(chinPen);
-                GraphicsPath chinArc;
-                addQuadBezier(chinArc,
-                              { headCenter.x - cheekHalfW * 0.56f, headCenter.y + chinY - 2.5f * hs },
-                              { headCenter.x, headCenter.y + chinY + 3.5f * hs },
-                              { headCenter.x + cheekHalfW * 0.56f, headCenter.y + chinY - 2.5f * hs });
-                lg.DrawPath(&chinPen, &chinArc);
+                // Subtle soft chin shadow curve (skip when custom head pixel texture is painted)
+                if (!skin.partTexture("head")) {
+                    Pen chinPen(isBlackRim
+                        ? Color(41, 255, 255, 255)
+                        : (pal.outline.set ? colMul(pal.outline, 0.45f) : Color(41, 46, 38, 31)),
+                        isBlackRim ? 1.05f : 1.0f);
+                    setRound(chinPen);
+                    GraphicsPath chinArc;
+                    addQuadBezier(chinArc,
+                                  { headCenter.x - cheekHalfW * 0.56f, headCenter.y + chinY - 2.5f * hs },
+                                  { headCenter.x, headCenter.y + chinY + 3.5f * hs },
+                                  { headCenter.x + cheekHalfW * 0.56f, headCenter.y + chinY - 2.5f * hs });
+                    lg.DrawPath(&chinPen, &chinArc);
+                }
             }
 
             // 5. Native KuroCat Face Features (normal authentic almond eyes — no round bug-eyes!)

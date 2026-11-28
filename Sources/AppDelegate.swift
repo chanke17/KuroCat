@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastAnnouncedHour: Int = -1
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.6.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.6.1"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -479,7 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
             || physics.scruffDizzyIntensity.value > 0.02 || physics.mousePressMiddle.value > 0.02
             || wasYawning || physics.isYawning
-            || (!isAsleep && (wasBlinking || physics.isBlinking))
+            || (!isAsleep && (wasBlinking || physics.isBlinking || physics.musicIntensity > 0.01))
         let isActive = now - lastDirectInput < 0.8 || !input.activeKeys.isEmpty
             || mouseStartedMoving || mouseNearPet
             || input.leftMouseDown || input.rightMouseDown || input.otherMouseDown

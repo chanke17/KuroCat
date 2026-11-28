@@ -1890,13 +1890,13 @@ enum CatRenderer {
     private static let headWarpY1: CGFloat = 58
 
     private static func warpHeadDomeCGImage(_ tex: SkinPartTexture, dome: Bool, yawRad: CGFloat, pitchRad: CGFloat) -> CGImage? {
-        let qYaw = Int((yawRad * 40).rounded())
-        let qPitch = Int((pitchRad * 40).rounded())
+        let qYaw = Int((yawRad * 120).rounded())
+        let qPitch = Int((pitchRad * 120).rounded())
         let key = PartHeadDomeCacheKey(tag: tex.cacheTag, dome: dome, qYaw: qYaw, qPitch: qPitch)
         if let hit = partHeadDomeCache[key] { return hit }
 
-        let yr = CGFloat(qYaw) / 40.0
-        let pr = CGFloat(qPitch) / 40.0
+        let yr = CGFloat(qYaw) / 120.0
+        let pr = CGFloat(qPitch) / 120.0
         let W = headWarpW, H = headWarpH
         var dst = [UInt8](repeating: 0, count: W * H * 4)
 
@@ -1983,7 +1983,7 @@ enum CatRenderer {
         guard let img = makeCGImageFromPremulRGBA(dst, width: W, height: H) else { return nil }
         partHeadDomeCache[key] = img
         partHeadDomeOrder.append(key)
-        if partHeadDomeOrder.count > 48 {
+        if partHeadDomeOrder.count > 96 {
             let old = partHeadDomeOrder.removeFirst()
             partHeadDomeCache.removeValue(forKey: old)
         }
@@ -2328,10 +2328,12 @@ enum CatRenderer {
         let isDome = skin.headSurface == .dome
         let t = HeadTransform(yaw: yaw, pitch: pitch, tilt: tilt, headScale: skin.shape.headScale, isDome: isDome)
         let needsJawBody = skin.partGradients["body"] != nil
+            || skin.partTexture("body") != nil
             || skin.regions.contains { $0.space == .body }
             || skin.marks.contains { $0.space == .body }
         let needsJawHead = (skin.palette.headBody != nil && skin.palette.headBody != skin.palette.body)
             || skin.partGradients["head"] != nil
+            || skin.partTexture("head") != nil
             || skin.regions.contains { $0.space == .head || $0.space == .skull }
             || skin.marks.contains { $0.space == .head || $0.space == .skull }
 
@@ -4782,28 +4784,52 @@ enum CatRenderer {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
         ctx.saveGState()
 
+        let legShape = CGMutablePath()
+        legShape.move(to: CGPoint(x: top.x + sign * 8.5, y: top.y))
+        legShape.addQuadCurve(
+            to: CGPoint(x: bottom.x + sign * 7.5, y: bottom.y - 1),
+            control: CGPoint(x: top.x + sign * 9.5, y: (top.y + bottom.y) * 0.5)
+        )
+        legShape.addQuadCurve(
+            to: CGPoint(x: bottom.x + sign * 0.8, y: bottom.y + 5.2),
+            control: CGPoint(x: bottom.x + sign * 7.0, y: bottom.y + 5.2)
+        )
+        legShape.addQuadCurve(
+            to: CGPoint(x: bottom.x - sign * 6.0, y: bottom.y - 1),
+            control: CGPoint(x: bottom.x - sign * 6.2, y: bottom.y + 5.2)
+        )
+        legShape.addQuadCurve(
+            to: CGPoint(x: top.x - sign * 7.0, y: top.y + 4),
+            control: CGPoint(x: top.x - sign * 6.5, y: (top.y + bottom.y) * 0.5)
+        )
+        legShape.closeSubpath()
+
         if let point = pal.points {
-            // Creamy upper leg dipping smoothly into adorable seal-point chocolate socks resting on the keyboard!
+            // Creamy upper leg dipping smoothly into seal-point chocolate socks across the full legShape!
             let mid = pal.pointsMid ?? point
-            let legRect = CGRect(x: bottom.x - 7.5, y: top.y, width: 15.0, height: bottom.y - top.y + 5.0)
-            let legPath = CGPath(roundedRect: legRect, cornerWidth: 6.5, cornerHeight: 6.5, transform: nil)
-            let armTex = skin.partTexture(isLeft ? "leftArm" : "rightArm")
+            let armKey = isLeft ? "leftArm" : "rightArm"
+            let armTex = skin.partTexture(armKey)
             ctx.saveGState()
-            ctx.addPath(legPath)
+            ctx.addPath(legShape)
             ctx.clip()
-            let cs = skinColorSpace(skin)
-            let colors = [
-                sc(pal.body, 0.0, skin).cgColor,
-                sc(mid, 0.75, skin).cgColor,
-                sc(point, skin).cgColor
-            ] as CFArray
-            if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.05, 0.50, 0.82]) {
-                ctx.drawLinearGradient(
-                    grad,
-                    start: CGPoint(x: top.x, y: top.y),
-                    end: CGPoint(x: bottom.x, y: bottom.y + 5.0),
-                    options: []
-                )
+            let srgb = usesSRGB(skin)
+            if let armGrad = skin.partGradients[armKey] {
+                drawClampedPartGradient(in: ctx, armGrad, start: top, end: CGPoint(x: bottom.x, y: bottom.y + 5.0), srgb: srgb)
+            } else {
+                let cs = skinColorSpace(skin)
+                let colors = [
+                    sc(pal.body, 0.0, skin).cgColor,
+                    sc(mid, 0.75, skin).cgColor,
+                    sc(point, skin).cgColor
+                ] as CFArray
+                if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.05, 0.50, 0.82]) {
+                    ctx.drawLinearGradient(
+                        grad,
+                        start: CGPoint(x: top.x, y: top.y),
+                        end: CGPoint(x: bottom.x, y: bottom.y + 5.0),
+                        options: []
+                    )
+                }
             }
             if let at = armTex {
                 drawIdleArmPartTexture(in: ctx, tex: at, top: top, bottom: bottom, sign: sign)
@@ -4812,27 +4838,6 @@ enum CatRenderer {
         } else {
             let srgb = usesSRGB(skin)
             let cs = skinColorSpace(skin)
-            // Smooth shoulder-fade leg fill so palette.legs shows cleanly on idle sitting legs too
-            // ("idleLegs": "legs"; the built-in coats use "chest" and keep their approved look)
-            let legShape = CGMutablePath()
-            legShape.move(to: CGPoint(x: top.x + sign * 8.5, y: top.y))
-            legShape.addQuadCurve(
-                to: CGPoint(x: bottom.x + sign * 7.5, y: bottom.y - 1),
-                control: CGPoint(x: top.x + sign * 9.5, y: (top.y + bottom.y) * 0.5)
-            )
-            legShape.addQuadCurve(
-                to: CGPoint(x: bottom.x + sign * 0.8, y: bottom.y + 5.2),
-                control: CGPoint(x: bottom.x + sign * 7.0, y: bottom.y + 5.2)
-            )
-            legShape.addQuadCurve(
-                to: CGPoint(x: bottom.x - sign * 6.0, y: bottom.y - 1),
-                control: CGPoint(x: bottom.x - sign * 6.2, y: bottom.y + 5.2)
-            )
-            legShape.addQuadCurve(
-                to: CGPoint(x: top.x - sign * 7.0, y: top.y + 4),
-                control: CGPoint(x: top.x - sign * 6.5, y: (top.y + bottom.y) * 0.5)
-            )
-            legShape.closeSubpath()
             let armSpace: SkinSpace = isLeft ? .leftArm : .rightArm
             let armTex = skin.partTexture(armSpace.rawValue)
             if let armGrad = skin.partGradients[armSpace.rawValue] {
@@ -5089,7 +5094,7 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
             if let lt = limbTex {
-                ctx.setFillColor(sc(limbBaseCol, skin).cgColor)
+                ctx.setFillColor(sc(limbPawCol, skin).cgColor)
                 ctx.fillEllipse(in: pawRect)
                 let u = CGMutablePath()
                 u.addPath(limbPath)
@@ -9359,10 +9364,20 @@ enum CatRenderer {
                 default: break
                 }
             }
+            let dragHeadTex = skin.partTexture("head")
             if let dbt = skin.partTexture("body") {
                 ctx.saveGState()
-                ctx.addPath(polyline(dragBodySide, closed: true, map: headMap))
-                ctx.clip()
+                // Shift body clip up 1.5pt under dragHeadSide when headTex is present so there is
+                // zero 0.5px anti-aliasing seam at the chin while never bleeding into the upper face.
+                if dragHeadTex != nil {
+                    ctx.translateBy(x: 0, y: -1.5)
+                    ctx.addPath(polyline(dragBodySide, closed: true, map: headMap))
+                    ctx.clip()
+                    ctx.translateBy(x: 0, y: 1.5)
+                } else {
+                    ctx.addPath(polyline(dragBodySide, closed: true, map: headMap))
+                    ctx.clip()
+                }
                 var bodySamples: [StripMeshSample] = []
                 let steps = 12
                 for i in 0...steps {
@@ -9376,7 +9391,7 @@ enum CatRenderer {
                 drawStripMeshPartTexture(in: ctx, tex: dbt, samples: bodySamples, x0: uvBody.y0, x1: uvBody.y1, vertical: true)
                 ctx.restoreGState()
             }
-            if let dht = skin.partTexture("head"),
+            if let dht = dragHeadTex,
                let warpedHead = warpHeadDomeCGImage(dht, dome: skin.headSurface == .dome,
                                                       yawRad: physics.headYaw.value * KuroRig.yawPerUnit,
                                                       pitchRad: physics.headPitch.value * KuroRig.pitchPerUnit) {
@@ -9402,17 +9417,19 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
 
-            // Subtle soft chin shadow curve (gentle depth cue without cutting a hard ring through solid coats)
-            ctx.saveGState()
-            ctx.setStrokeColor(isBlackRim
-                ? NSColor(calibratedWhite: 1.0, alpha: 0.16).cgColor
-                : (pal.outline.map { sc($0, 0.45, skin).cgColor } ?? NSColor(calibratedRed: 0.18, green: 0.15, blue: 0.12, alpha: 0.16).cgColor))
-            ctx.setLineWidth(isBlackRim ? 1.05 : 1.0)
-            ctx.move(to: CGPoint(x: headCenter.x - cheekHalfW * 0.56, y: headCenter.y + chinY - 2.5 * hs))
-            ctx.addQuadCurve(to: CGPoint(x: headCenter.x + cheekHalfW * 0.56, y: headCenter.y + chinY - 2.5 * hs),
-                             control: CGPoint(x: headCenter.x, y: headCenter.y + chinY + 3.5 * hs))
-            ctx.strokePath()
-            ctx.restoreGState()
+            // Subtle soft chin shadow curve (only when no custom head pixel texture is painted, to avoid a double-chin seam)
+            if dragHeadTex == nil {
+                ctx.saveGState()
+                ctx.setStrokeColor(isBlackRim
+                    ? NSColor(calibratedWhite: 1.0, alpha: 0.16).cgColor
+                    : (pal.outline.map { sc($0, 0.45, skin).cgColor } ?? NSColor(calibratedRed: 0.18, green: 0.15, blue: 0.12, alpha: 0.16).cgColor))
+                ctx.setLineWidth(isBlackRim ? 1.05 : 1.0)
+                ctx.move(to: CGPoint(x: headCenter.x - cheekHalfW * 0.56, y: headCenter.y + chinY - 2.5 * hs))
+                ctx.addQuadCurve(to: CGPoint(x: headCenter.x + cheekHalfW * 0.56, y: headCenter.y + chinY - 2.5 * hs),
+                                 control: CGPoint(x: headCenter.x, y: headCenter.y + chinY + 3.5 * hs))
+                ctx.strokePath()
+                ctx.restoreGState()
+            }
         }
 
         // 5. Native KuroCat Face Features (normal authentic almond eyes — no round bug-eyes!)
