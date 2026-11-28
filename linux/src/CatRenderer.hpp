@@ -3709,7 +3709,7 @@ private:
             cairo_save(cr);
             traceIdleLeg();
             if (auto ag = skin.partGradients.find(armKey); ag != skin.partGradients.end()) {
-                fillPartGradient(cr, top.x, top.y, bottom.x, bottom.y + 5.0, ag->second);
+                fillClampedPartGradient(cr, ag->second, top.x, top.y, bottom.x, bottom.y + 5.0);
             } else {
                 cairo_pattern_t* grad = detail::CairoPatternCache::instance().getLinear(top.x, top.y, bottom.x, bottom.y + 5.0, {
                     {0.05, pal.body.r, pal.body.g, pal.body.b, 0.0},
