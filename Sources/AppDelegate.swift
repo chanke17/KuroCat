@@ -1090,16 +1090,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
             return false
         }
+        let screens = NSScreen.screens
+        // CGWindowListCopyWindowInfo returns bounds in Quartz global coordinates (origin at the
+        // top-left of the primary display), while NSScreen.frame uses AppKit coordinates (origin
+        // at the bottom-left). Convert before matching a window to its screen.
+        let primaryHeight = (screens.first(where: { $0.frame.origin == .zero }) ?? screens.first)?.frame.height ?? 0
         let pid = front.processIdentifier
         for w in list {
             guard let ownerPID = w[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid,
                   let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
                   let boundsDict = w[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
-            for screen in NSScreen.screens {
-                if rect.width >= screen.frame.width - 2 && rect.height >= screen.frame.height - 2 {
-                    return true
+            let appKitRect = CGRect(x: rect.origin.x,
+                                    y: primaryHeight - rect.origin.y - rect.height,
+                                    width: rect.width,
+                                    height: rect.height)
+            // Only compare against the screen the window actually occupies (largest overlap).
+            // Comparing against every screen misdetected a large window on a bigger external
+            // display as "fullscreen" on the smaller built-in display, hiding the cat whenever
+            // focus moved to the external screen (issue #51).
+            var bestScreen: NSScreen?
+            var bestArea: CGFloat = 0
+            for screen in screens {
+                let inter = appKitRect.intersection(screen.frame)
+                guard !inter.isNull else { continue }
+                let area = inter.width * inter.height
+                if area > bestArea {
+                    bestArea = area
+                    bestScreen = screen
                 }
+            }
+            guard let screen = bestScreen else { continue }
+            if rect.width >= screen.frame.width - 2 && rect.height >= screen.frame.height - 2 {
+                return true
             }
         }
         return false
