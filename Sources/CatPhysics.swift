@@ -173,6 +173,13 @@ final class CatSettings {
     var keyboardTheme: KeyboardTheme {
         didSet { UserDefaults.standard.set(keyboardTheme.rawValue, forKey: "KuroCat.KeyboardTheme") }
     }
+    /// Classic desk is the default so keyboard skins stay as they are until the user opts into a laptop.
+    var deskSetupMode: DeskSetupMode {
+        didSet { UserDefaults.standard.set(deskSetupMode.rawValue, forKey: "KuroCat.DeskSetupMode") }
+    }
+    var macBookColorOption: MacBookColorOption {
+        didSet { UserDefaults.standard.set(macBookColorOption.rawValue, forKey: "KuroCat.MacBookColor") }
+    }
     var eyeTheme: EyeColorTheme {
         didSet { UserDefaults.standard.set(eyeTheme.rawValue, forKey: "KuroCat.EyeTheme") }
     }
@@ -258,6 +265,8 @@ final class CatSettings {
         scale = savedScale > 0.3 ? CGFloat(savedScale) : 1.0
         coatTheme = CatCoatTheme(rawValue: d.string(forKey: "KuroCat.CoatTheme") ?? "") ?? .classicBlack
         keyboardTheme = KeyboardTheme(rawValue: d.string(forKey: "KuroCat.KeyboardTheme") ?? "") ?? .classicMilk
+        deskSetupMode = DeskSetupMode(rawValue: d.string(forKey: "KuroCat.DeskSetupMode") ?? "") ?? .keyboardAndMouse
+        macBookColorOption = MacBookColorOption(rawValue: d.string(forKey: "KuroCat.MacBookColor") ?? "") ?? .auto
         let savedEye = d.string(forKey: "KuroCat.EyeTheme") ?? ""
         eyeTheme = EyeColorTheme.saved(savedEye)
         overrideSkinIris = d.object(forKey: "KuroCat.OverrideSkinIris") as? Bool ?? false
@@ -359,6 +368,8 @@ final class CatPhysics {
     static let rightPawRest = CGPoint(x: 204, y: 235)
     static let hindFootRest = CGPoint(x: 214, y: 234)
     static let mouseBaseCenter = CGPoint(x: 78, y: 258)
+    /// Force Touch trackpad, centered on the laptop palm rest (closer to the cat than the key well).
+    static let trackpadBaseCenter = CGPoint(x: 193, y: 234)
 
     // Springs
     var leftPaw = Spring2D(leftPawRest)
@@ -390,6 +401,7 @@ final class CatPhysics {
     }
 
     var bodyShiftX = Spring1D(0)
+    var bodyShiftY = Spring1D(0)     // negative = scoot back onto the trackpad, positive = lean forward while typing
     var bodyTilt = Spring1D(0)       // radians
     var bodySquash = Spring1D(1.0)
     var headTilt = Spring1D(0)       // radians (roll)
@@ -475,6 +487,7 @@ final class CatPhysics {
 
     // Paw mode flags (for crisp outline & posture rendering)
     private(set) var leftPawOnMouse = false
+    private(set) var leftPawOnTrackpad = false
     private(set) var leftPawTyping = false
     private(set) var rightPawTyping = false
 
@@ -1263,7 +1276,18 @@ final class CatPhysics {
         }
         let douniActive = isDouniTyping && (douniSlapTimer > 0.01 || !activeKeys.isEmpty) && scruff <= 0.25 && dizzy <= 0.35 && lie <= 0.45
 
+        // Laptop posture only when the user left the classic desk. Tablet mode keeps the pen, not the trackpad.
+        let showLaptop = CatSettings.shared.deskSetupMode != .keyboardAndMouse
+            && !isTabletActive
+            && HardwareMonitor.shared.shouldShowLaptop
+        let useExternalMouse = showLaptop ? HardwareMonitor.shared.shouldShowExternalMouse : true
+        let pointerMouseCenter = CGPoint(
+            x: liveMouseCenter.x - (showLaptop ? 12 : 0),
+            y: liveMouseCenter.y
+        )
+
         // Left paw target (Video 1 chubby mid-air dangling mittens during scruff / Video 2 Douni slap / normal typing)
+        leftPawOnTrackpad = false
         if scruff > 0.24 {
             let scruffS = scruff * scruff * (3.0 - 2.0 * scruff)
             let liftSeatY = CatPhysics.seatAnchor.y - scruffS * 44.0
@@ -1300,11 +1324,21 @@ final class CatPhysics {
                         if tabletTrail.count > 28 { tabletTrail.removeFirst() }
                     }
                 }
+                leftPawTyping = false
+                leftPawOnMouse = true
+            } else if showLaptop && !useExternalMouse {
+                leftPaw.target = CGPoint(
+                    x: CatPhysics.trackpadBaseCenter.x + mouseOffset.point.x * 1.15,
+                    y: CatPhysics.trackpadBaseCenter.y + mouseOffset.point.y * 0.75
+                )
+                leftPawTyping = false
+                leftPawOnMouse = false
+                leftPawOnTrackpad = true
             } else {
-                leftPaw.target = CGPoint(x: liveMouseCenter.x + 2, y: liveMouseCenter.y - 3)
+                leftPaw.target = CGPoint(x: pointerMouseCenter.x + 2, y: pointerMouseCenter.y - 3)
+                leftPawTyping = false
+                leftPawOnMouse = true
             }
-            leftPawTyping = false
-            leftPawOnMouse = true
         } else {
             // Keep paws tucked neatly in rest position when curling into a sleeping cat ball!
             leftPaw.target = CatPhysics.leftPawRest
@@ -1404,20 +1438,38 @@ final class CatPhysics {
             targetShiftX = (avgX - 184) * 0.14
             targetBodyTilt = (avgX - 184) * 0.0011
         }
+        var targetShiftY: CGFloat = 0
+        if showLaptop {
+            if leftPawOnTrackpad && !rightPawTyping {
+                targetShiftX = 2.0
+                targetShiftY = -12.5
+                targetBodyTilt = 0.03
+            } else if leftPawOnMouse && rightPawTyping {
+                targetShiftY = 4.0
+            } else if leftPawTyping || rightPawTyping {
+                targetShiftY = 5.5
+            }
+        }
         bodyShiftX.target = max(-16, min(16, targetShiftX))
+        bodyShiftY.target = max(-15, min(8, targetShiftY))
         bodyTilt.target = max(-0.12, min(0.12, targetBodyTilt)) + scruffSwing.value * scruff
         // Keep body sleek & natural during lie/dizzy (zero fat distortion; renderer handles smooth rigid fall & forward sprawl!)
         bodySquash.target = 1.0 - hunt * 0.11 + scruff * 0.16
 
         let classicSleepBlend: CGFloat = ["builtin:0", "builtin:1", "builtin:2", "builtin:3"].contains(CatSettings.shared.activeSkin.id)
             ? lie * lie * (3.0 - 2.0 * lie) : 0
-        headOffsetY.target = ((leftPawTyping || rightPawTyping) ? 3.5 : (sleepiness * 5.0 * (1.0 - classicSleepBlend) + hunt * 10.5))
-            - scruff * 10.0
+        if showLaptop && leftPawOnTrackpad && !leftPawTyping && !rightPawTyping {
+            headOffsetY.target = -1.5
+        } else {
+            headOffsetY.target = ((leftPawTyping || rightPawTyping) ? 3.5 : (sleepiness * 5.0 * (1.0 - classicSleepBlend) + hunt * 10.5))
+                - scruff * 10.0
+        }
         earFold.target = max(petHeadIntensity * 0.7, petBodyIntensity * 0.45) + sleepiness * 0.25 * (1.0 - classicSleepBlend) - hunt * 0.18
             + scruff * 0.35 + anger * 0.45 + dizzy * 0.35
         earTwitch.target = 0
 
         bodyShiftX.step(dt: dt, stiffness: 140, damping: 18)
+        bodyShiftY.step(dt: dt, stiffness: 130, damping: 18)
         bodyTilt.step(dt: dt, stiffness: 140, damping: 18)
         bodySquash.step(dt: dt, stiffness: 280, damping: 18)
         headOffsetY.step(dt: dt, stiffness: 180, damping: 19)
@@ -1428,7 +1480,7 @@ final class CatPhysics {
         // Head smoothly turns in pseudo-3D toward the mouse cursor (or subtly nods down toward keys while typing).
         let typingRecently = !activeKeys.isEmpty || (now - curLastKeyTime < 0.65)
         let mouseMovedRecently = (now - curLastMouseMove < 1.2)
-        let eyeOriginCanvas = CGPoint(x: CatPhysics.seatAnchor.x + bodyShiftX.value, y: 124 + headOffsetY.value)
+        let eyeOriginCanvas = CGPoint(x: CatPhysics.seatAnchor.x + bodyShiftX.value, y: 124 + headOffsetY.value + bodyShiftY.value)
 
         // Compute normalized vector from cat head to real macOS screen cursor
         let scale = max(0.2, windowFrameInScreen.width / CatPhysics.canvasSize.width)

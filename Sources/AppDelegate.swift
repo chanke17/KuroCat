@@ -674,6 +674,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         levelKbItem.state = settings.levelKeyboard ? .on : .off
         menu.addItem(levelKbItem)
 
+        let deskMenu = NSMenu()
+        for mode in DeskSetupMode.allCases {
+            let item = NSMenuItem(title: mode.title(english: en), action: #selector(selectDeskSetupMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = settings.deskSetupMode == mode ? .on : .off
+            deskMenu.addItem(item)
+        }
+        deskMenu.addItem(.separator())
+        for opt in MacBookColorOption.allCases {
+            let item = NSMenuItem(title: opt.title(english: en), action: #selector(selectMacBookColor(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = opt.rawValue
+            item.state = settings.macBookColorOption == opt ? .on : .off
+            deskMenu.addItem(item)
+        }
+        let deskParent = NSMenuItem(title: tr("桌面外设 / 笔记本 💻", "Desk / Laptop 💻"), action: nil, keyEquivalent: "")
+        deskParent.submenu = deskMenu
+        menu.addItem(deskParent)
+
+        let hwItem = NSMenuItem(title: tr("外设: ", "Desk: ") + HardwareMonitor.shared.hardwareSummary, action: nil, keyEquivalent: "")
+        hwItem.isEnabled = false
+        menu.addItem(hwItem)
+
         let settingsItem = NSMenuItem(title: tr("⚙️ 设置…", "⚙️ Settings…"), action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -1048,6 +1072,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleLevelKeyboard() {
         CatSettings.shared.levelKeyboard.toggle()
+        wakeToActive(immediateRedraw: true)
+        settingsWindow?.refresh()
+    }
+
+    @objc private func selectDeskSetupMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = DeskSetupMode(rawValue: raw) else { return }
+        CatSettings.shared.deskSetupMode = mode
+        wakeToActive(immediateRedraw: true)
+        settingsWindow?.refresh()
+    }
+
+    @objc private func selectMacBookColor(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let opt = MacBookColorOption(rawValue: raw) else { return }
+        CatSettings.shared.macBookColorOption = opt
         wakeToActive(immediateRedraw: true)
         settingsWindow?.refresh()
     }
