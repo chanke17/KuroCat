@@ -4439,9 +4439,10 @@ enum CatRenderer {
         }
 
         let hunt = max(0, min(1, max(physics.huntIntensity.value, scruffWide * 0.94)))
+        let tired = physics.effectiveTiredness
 
-        // Subtle feline eye angle (straightens slightly when wide-eyed hunting!)
-        ctx.rotate(by: sign * (0.06 * (1.0 - hunt * 0.6)))
+        // Subtle feline eye angle (straightens slightly when wide-eyed hunting, droops when tired!)
+        ctx.rotate(by: sign * (0.06 * (1.0 - hunt * 0.6) - tired * 0.04))
 
         // Eyes grow rounder & slightly larger in full hunting focus!
         let isSiameseEye = build(skin).sleekEyes && siameseBlue
@@ -4450,20 +4451,24 @@ enum CatRenderer {
         let eyeRect = CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2)
 
         // Clip to the visible opening before painting any iris/pupil pixels.
-        // Painting a lid over an antialiased oval leaves a colored fringe.
+        // Painting a lid over an antialiased oval leaves a colored fringe and flattens patterned faces.
         ctx.saveGState()
         ctx.addEllipse(in: eyeRect)
         ctx.clip()
 
-        let closure = max(0, min(1, max(physics.effectiveEyeClosure, scruffStartle * 0.44)))
-        if closure >= 1 {
-            ctx.restoreGState()
-            ctx.restoreGState()
-            return
-        }
+        let blinkClosure = physics.effectiveEyeClosure
+        let closure = max(0, min(1, max(blinkClosure, max(tired * 0.36, scruffStartle * 0.44))))
+        if closure < 1 {
         if closure > 0 {
-            ctx.clip(to: CGRect(x: -rx - 2, y: -ry + 2 * ry * closure,
-                                width: 2 * rx + 4, height: 2 * ry * (1 - closure)))
+            if tired > 0.02 {
+                // Slanted weary opening. The face pattern already drawn under the eye shows through;
+                // nothing is repainted with a flat eyelid color.
+                ctx.addPath(tiredEyeOpening(rx: rx, ry: ry, closure: closure, tired: tired, sign: sign))
+                ctx.clip()
+            } else {
+                ctx.clip(to: CGRect(x: -rx - 2, y: -ry + 2 * ry * closure,
+                                    width: 2 * rx + 4, height: 2 * ry * (1 - closure)))
+            }
         }
         // Angry furrowed V-brow slant clipped cleanly inside the eye so every skin's real forehead fur (including Siamese mask!) shows through seamlessly!
         let anger = max(0, min(1, physics.angerIntensity.value))
@@ -4492,7 +4497,7 @@ enum CatRenderer {
         }
         let gaze = physics.eyeGaze.point
         let px = gaze.x * (4.2 - hunt * 1.2)
-        let py = gaze.y * (3.6 - hunt * 1.0)
+        let py = gaze.y * (3.6 - hunt * 1.0) + tired * 1.2
         let irisTex = skin.partTexture(isLeft ? "leftIris" : "rightIris")
         let hidePupilOpt = skin.partTextureOptions.hideDefaultPupil
         if let it = irisTex {
@@ -4565,9 +4570,62 @@ enum CatRenderer {
                 ))
             }
         }
+        } // closure < 1: a fully shut eye paints no iris and no eye-ring
 
         ctx.restoreGState()
+
+        // Light lid line follows the visible opening only. A full ellipse stroke would
+        // leave a ring after the eye has closed, and a filled lid would flatten tabby/calico faces.
+        if tired > 0.2 && closure > 0.02 && closure < 0.98 && blinkClosure < 0.55 {
+            let lidY = -ry + 2 * ry * closure
+            let slant = tired * 1.8 * sign
+            let crease = isDarkEyeArea
+                ? NSColor(calibratedWhite: 1.0, alpha: 0.28 * tired)
+                : NSColor(calibratedWhite: 0.15, alpha: 0.35 * tired)
+            ctx.setStrokeColor(crease.cgColor)
+            ctx.setLineWidth(1.05)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: -rx + 0.6, y: lidY - slant))
+            ctx.addQuadCurve(
+                to: CGPoint(x: rx - 0.6, y: lidY + slant),
+                control: CGPoint(x: 0, y: lidY + tired * 1.6)
+            )
+            ctx.strokePath()
+        }
+
+        // Under-eye crescent sits on the cheek, below the iris, so the coat pattern stays intact.
+        if tired > 0.15 {
+            let bag = isDarkEyeArea
+                ? NSColor(calibratedWhite: 0.82, alpha: 0.22 * tired)
+                : NSColor(calibratedRed: 0.42, green: 0.30, blue: 0.36, alpha: 0.38 * tired)
+            ctx.setStrokeColor(bag.cgColor)
+            ctx.setLineWidth(1.35)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: -rx * 0.72, y: ry * 0.92))
+            ctx.addQuadCurve(
+                to: CGPoint(x: rx * 0.72, y: ry * 0.92),
+                control: CGPoint(x: 0, y: ry + 3.6)
+            )
+            ctx.strokePath()
+        }
+
         ctx.restoreGState()
+    }
+
+    /// Visible eye opening under a drooping upper lid. Caller clips to this after the eye oval.
+    private static func tiredEyeOpening(rx: CGFloat, ry: CGFloat, closure: CGFloat, tired: CGFloat, sign: CGFloat) -> CGPath {
+        let lidY = -ry + 2 * ry * closure
+        let slant = tired * 1.8 * sign
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: -rx - 2, y: lidY - slant))
+        path.addQuadCurve(
+            to: CGPoint(x: rx + 2, y: lidY + slant),
+            control: CGPoint(x: 0, y: lidY + tired * 1.6)
+        )
+        path.addLine(to: CGPoint(x: rx + 2, y: ry + 4))
+        path.addLine(to: CGPoint(x: -rx - 2, y: ry + 4))
+        path.closeSubpath()
+        return path
     }
 
     private static func drawWhiskers3D(

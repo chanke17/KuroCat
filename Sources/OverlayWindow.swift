@@ -1541,6 +1541,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var resetSkinsDirBtn: KuroThemedButton?
     private var kbPopup: NSPopUpButton?
     private var eyePopup: NSPopUpButton?
+    private var tiredEyesPopup: NSPopUpButton?
     private var tabletPopup: NSPopUpButton?
     private var typingLimbPopup: NSPopUpButton?
     private var obsPopup: NSPopUpButton?
@@ -1605,7 +1606,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func clearControlRefs() {
         skinPopup = nil; skinsDirLabel = nil; resetSkinsDirBtn = nil
-        kbPopup = nil; eyePopup = nil; tabletPopup = nil; typingLimbPopup = nil
+        kbPopup = nil; eyePopup = nil; tiredEyesPopup = nil; tabletPopup = nil; typingLimbPopup = nil
         obsPopup = nil; langSeg = nil
         whiteOutlineSwitch = nil; flipSwitch = nil; angerSwitch = nil; dragAnimSwitch = nil
         badgesSwitch = nil; mouseBadgesSwitch = nil; legendsSwitch = nil; marqueeSwitch = nil
@@ -1970,6 +1971,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 tabP.action = #selector(onTabletSelected)
                 card.addSubview(tabP); tabletPopup = tabP
             }
+            addCard(rows: 1) { card, _ in
+                card.addSubview(makeLabel(tr("熬夜疲惫眼", "Late-Night Tired Eyes"), yPos: 3, width: 150))
+                let tiredP = NSPopUpButton(frame: NSRect(x: 168, y: 8, width: 296, height: 24), pullsDown: false)
+                for mode in TiredEyesMode.allCases {
+                    tiredP.addItem(withTitle: mode.title(english: s.isEnglish))
+                }
+                if let idx = TiredEyesMode.allCases.firstIndex(of: s.tiredEyesMode) {
+                    tiredP.selectItem(at: idx)
+                }
+                tiredP.target = self
+                tiredP.action = #selector(onTiredEyesSelected)
+                card.addSubview(tiredP)
+                tiredEyesPopup = tiredP
+            }
         } else {
             addCard(rows: 9) { card, rh in
                 card.addSubview(makeLabel(tr("全屏应用上方置顶显示", "Always On Top Over Fullscreen"), yPos: 3, width: 360))
@@ -2153,6 +2168,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             CatSettings.shared.customKeyboard = ""
             CatSettings.shared.keyboardTheme = kb
         }
+        onSettingsChanged?()
+    }
+
+    @objc private func onTiredEyesSelected() {
+        guard let popup = tiredEyesPopup else { return }
+        let idx = popup.indexOfSelectedItem
+        let modes = TiredEyesMode.allCases
+        guard idx >= 0 && idx < modes.count else { return }
+        CatSettings.shared.tiredEyesMode = modes[idx]
         onSettingsChanged?()
     }
 
